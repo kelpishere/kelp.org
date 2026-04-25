@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Black Tide</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="game-shell"></div>
+      <div id="reticle" aria-hidden="true"></div>
+
+      <div id="hud">
+        <div class="top-strip">
+          <div class="brand">
+            <span class="kicker">Escape Epstein's Island</span>
+            <h1>Black Tide</h1>
+          </div>
+          <div class="timer-pill" id="timer-pill">00:00.000</div>
+          <div class="alert-pill" id="alert-pill">Quiet</div>
+        </div>
+
+        <div class="panel left-panel">
+          <p class="panel-label">Boat Prep</p>
+          <ul class="objective-list">
+            <li data-item="key">Boat key</li>
+            <li data-item="fuel">Fuel can</li>
+            <li data-item="files">The files</li>
+            <li data-item="accessCard">Access card</li>
+            <li data-item="fuse">Dock fuse</li>
+            <li data-item="safeCode">Safe code</li>
+            <li data-item="chart">Island chart</li>
+            <li data-item="manifest">Harbor manifest</li>
+            <li data-item="battery">Radio battery</li>
+          </ul>
+        </div>
+
+        <div class="panel right-panel">
+          <p class="panel-label">Noise</p>
+          <div class="meter">
+            <div id="sound-fill"></div>
+          </div>
+          <p id="sound-text">Barely audible</p>
+        </div>
+
+        <div class="center-prompt" id="center-prompt"></div>
+        <div class="status-line" id="status-line">Reach the boat after you collect everything.</div>
+
+        <div class="controls-hint panel">
+          <span>WASD move</span>
+          <span>Space jump</span>
+          <span>Shift sprint</span>
+          <span>C crouch</span>
+          <span>E interact</span>
+          <span>Mouse look</span>
+          <span>Arrows look</span>
+          <span>Esc free mouse</span>
+        </div>
+      </div>
+
+      <div id="danger-vignette"></div>
+
+      <div class="screen active" id="start-screen">
+        <div class="screen-inner">
+          <p class="eyebrow">Stealth Horror</p>
+          <h2>Slip off the island with the evidence.</h2>
+          <p>
+            Epstein can hear your footsteps, your sprinting, even the panic in your pace.
+            Find every escape item, solve the locked-object puzzles, then make it to the dock alive.
+          </p>
+          <p>Click to capture the mouse. If the browser refuses, click and drag still works.</p>
+          <div class="options-panel" aria-label="Game options">
+            <label class="option-control" for="music-volume">
+              <span>Music loudness <strong id="music-value">65%</strong></span>
+              <input id="music-volume" type="range" min="0" max="100" value="65" />
+            </label>
+            <label class="option-control" for="sensitivity-slider">
+              <span>Sensitivity <strong id="sensitivity-value">1.00x</strong></span>
+              <input id="sensitivity-slider" type="range" min="40" max="180" value="100" />
+            </label>
+          </div>
+          <button id="start-button">Enter the Island</button>
+        </div>
+      </div>
+
+      <div class="screen" id="end-screen">
+        <div class="screen-inner">
+          <p class="eyebrow" id="end-kicker">Caught</p>
+          <h2 id="end-title">He heard you.</h2>
+          <p id="end-copy">Every loud step shortens the night.</p>
+          <button id="restart-button">Try Again</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./src/main.js?v=stealth-2"></script>
+  </body>
+</html>
