@@ -19,6 +19,8 @@
           </div>
           <div class="timer-pill" id="timer-pill">00:00.000</div>
           <div class="alert-pill" id="alert-pill">Quiet</div>
+          <div class="flashlight-pill" id="flashlight-pill">Light On</div>
+          <div class="radar-pill" id="radar-pill">Radar Off</div>
         </div>
 
         <div class="panel left-panel">
@@ -33,6 +35,8 @@
             <li data-item="chart">Island chart</li>
             <li data-item="manifest">Harbor manifest</li>
             <li data-item="battery">Radio battery</li>
+            <li data-item="magnifier">Magnifying glass</li>
+            <li data-item="radar">Radar goggles</li>
           </ul>
         </div>
 
@@ -44,6 +48,36 @@
           <p id="sound-text">Barely audible</p>
         </div>
 
+        <div class="panel inventory-panel" id="inventory-panel" aria-label="Inventory">
+          <p class="panel-label">Inventory</p>
+          <div class="inventory-slots">
+            <button data-slot="0">1</button>
+            <button data-slot="1">2</button>
+            <button data-slot="2">3</button>
+            <button data-slot="3">4</button>
+            <button data-slot="4">5</button>
+            <button data-slot="5">6</button>
+          </div>
+        </div>
+
+        <div class="panel radar-map" id="radar-map" aria-label="Radar map">
+          <div class="radar-map-head">
+            <span>Radar Map</span>
+            <strong id="radar-battery-text">0%</strong>
+          </div>
+          <div class="radar-scope" aria-hidden="true">
+            <div class="radar-rings"></div>
+            <div class="radar-sweep"></div>
+            <div class="radar-center"></div>
+            <div id="radar-blips"></div>
+          </div>
+          <div class="radar-legend">
+            <span class="red">Epstein</span>
+            <span class="blue">Hawking</span>
+            <span class="yellow">Trump</span>
+          </div>
+        </div>
+
         <div class="center-prompt" id="center-prompt"></div>
         <div class="status-line" id="status-line">Reach the boat after you collect everything.</div>
 
@@ -53,6 +87,10 @@
           <span>Shift sprint</span>
           <span>C crouch</span>
           <span>E interact</span>
+          <span>Q use item</span>
+          <span>1-6 slots</span>
+          <span>F flashlight</span>
+          <span>G goggles</span>
           <span>Mouse look</span>
           <span>Arrows look</span>
           <span>Esc free mouse</span>
@@ -61,15 +99,30 @@
 
       <div id="danger-vignette"></div>
 
+      <div class="readout-panel" id="readout-panel" aria-hidden="true">
+        <div class="readout-inner">
+          <button id="readout-close" aria-label="Close">Close</button>
+          <p class="eyebrow">Inventory</p>
+          <h2 id="readout-title"></h2>
+          <p id="readout-body"></p>
+        </div>
+      </div>
+
       <div class="screen active" id="start-screen">
         <div class="screen-inner">
           <p class="eyebrow">Stealth Horror</p>
           <h2>Slip off the island with the evidence.</h2>
           <p>
-            Epstein can hear your footsteps, your sprinting, even the panic in your pace.
-            Find every escape item, solve the locked-object puzzles, then make it to the dock alive.
+            The hunters can hear your footsteps, your sprinting, even the panic in your pace.
+            Pick a mode, solve the locked-object route, then make it to the dock alive.
           </p>
           <p>Click to capture the mouse. If the browser refuses, click and drag still works.</p>
+          <div class="quality-menu" aria-label="Quality setting">
+            <button data-quality="low">Low Quality</button>
+            <button data-quality="normal">Normal Quality</button>
+            <button data-quality="high">High Quality</button>
+            <button data-quality="ultra">Ultra Quality</button>
+          </div>
           <div class="options-panel" aria-label="Game options">
             <label class="option-control" for="music-volume">
               <span>Music loudness <strong id="music-value">65%</strong></span>
@@ -80,7 +133,56 @@
               <input id="sensitivity-slider" type="range" min="40" max="180" value="100" />
             </label>
           </div>
-          <button id="start-button">Enter the Island</button>
+          <div class="custom-panel" aria-label="Custom mode settings">
+            <p class="panel-label">Custom Rules</p>
+            <div class="custom-grid">
+              <fieldset class="custom-fieldset">
+                <legend>Hunters</legend>
+                <label><input type="checkbox" data-custom-hunter="epstein" checked /> Epstein</label>
+                <label><input type="checkbox" data-custom-hunter="hawking" checked /> Hawking</label>
+                <label><input type="checkbox" data-custom-hunter="trump" checked /> Trump</label>
+              </fieldset>
+              <fieldset class="custom-fieldset">
+                <legend>Hunter Stats</legend>
+                <label class="option-control" for="custom-hearing">
+                  <span>Hearing <strong id="custom-hearing-value">1.00x</strong></span>
+                  <input id="custom-hearing" type="range" min="25" max="300" value="100" />
+                </label>
+                <label class="option-control" for="custom-sight">
+                  <span>Sight <strong id="custom-sight-value">1.00x</strong></span>
+                  <input id="custom-sight" type="range" min="25" max="300" value="100" />
+                </label>
+                <label class="option-control" for="custom-speed">
+                  <span>Movement <strong id="custom-speed-value">1.00x</strong></span>
+                  <input id="custom-speed" type="range" min="25" max="300" value="100" />
+                </label>
+              </fieldset>
+              <fieldset class="custom-fieldset custom-items">
+                <legend>Required To Leave</legend>
+                <label><input type="checkbox" data-custom-item="key" checked /> Boat key</label>
+                <label><input type="checkbox" data-custom-item="fuel" checked /> Fuel can</label>
+                <label><input type="checkbox" data-custom-item="files" checked /> The files</label>
+                <label><input type="checkbox" data-custom-item="accessCard" checked /> Access card</label>
+                <label><input type="checkbox" data-custom-item="fuse" checked /> Dock fuse</label>
+                <label><input type="checkbox" data-custom-item="safeCode" checked /> Safe code</label>
+                <label><input type="checkbox" data-custom-item="chart" checked /> Island chart</label>
+                <label><input type="checkbox" data-custom-item="manifest" checked /> Harbor manifest</label>
+                <label><input type="checkbox" data-custom-item="battery" checked /> Radio battery</label>
+                <label><input type="checkbox" data-custom-item="magnifier" checked /> Magnifying glass</label>
+                <label><input type="checkbox" data-custom-item="radar" checked /> Radar goggles</label>
+              </fieldset>
+              <fieldset class="custom-fieldset">
+                <legend>Gadgets</legend>
+                <label><input type="checkbox" id="custom-radar" checked /> Start with radar goggles</label>
+              </fieldset>
+            </div>
+          </div>
+          <div class="mode-actions" aria-label="Game mode">
+            <button id="start-button">Normal Escape</button>
+            <button id="practice-button">Practice Daylight</button>
+            <button id="custom-button">Start Custom</button>
+            <button id="impossible-button">Impossible Boat Rush</button>
+          </div>
         </div>
       </div>
 
@@ -94,6 +196,6 @@
       </div>
     </div>
 
-    <script type="module" src="./src/main.js?v=stealth-2"></script>
+    <script type="module" src="./src/main.js?v=handheld-radar-6"></script>
   </body>
 </html>
