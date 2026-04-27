@@ -6,6 +6,20 @@ const { URL } = require("url");
 const PORT = Number(process.env.PORT || 8787);
 const ROOT = __dirname;
 const rooms = new Map();
+const HUNTER_IDS = new Set(["epstein", "hawking", "trump"]);
+const ITEM_IDS = new Set([
+  "key",
+  "fuel",
+  "files",
+  "accessCard",
+  "fuse",
+  "safeCode",
+  "chart",
+  "manifest",
+  "battery",
+  "magnifier",
+  "radar",
+]);
 
 const types = {
   ".html": "text/html; charset=utf-8",
@@ -111,6 +125,38 @@ function cleanHunters(value) {
   }));
 }
 
+function cleanMultiplier(value, fallback = 1) {
+  return Math.max(0.25, Math.min(3, numberOr(value, fallback)));
+}
+
+function cleanIdList(value, allowed, fallback) {
+  if (!Array.isArray(value)) {
+    return [...fallback];
+  }
+
+  const ids = value.filter((id) => allowed.has(String(id)));
+  return [...new Set(ids)];
+}
+
+function cleanGameConfig(value = {}) {
+  const radarMode = value.radarMode === "none" ? "none" : "start";
+  const requiredItems = cleanIdList(value.requiredItems, ITEM_IDS, ITEM_IDS);
+  return {
+    speedMultiplier: cleanMultiplier(value.speedMultiplier),
+    hearingMultiplier: cleanMultiplier(value.hearingMultiplier),
+    sightMultiplier: cleanMultiplier(value.sightMultiplier),
+    rangeMultiplier: cleanMultiplier(value.rangeMultiplier ?? value.sightMultiplier),
+    hunterIds: cleanIdList(value.hunterIds, HUNTER_IDS, HUNTER_IDS),
+    requiredItems: radarMode === "none" ? requiredItems.filter((id) => id !== "radar") : requiredItems,
+    radarMode,
+    boatOnly: false,
+    wallBreaker: false,
+    daylight: false,
+    custom: true,
+    label: "Room Custom",
+  };
+}
+
 function createPlayer(room, username) {
   const player = {
     id: id("p"),
@@ -144,6 +190,7 @@ function roomPayload(room) {
     name: room.name,
     hostId: room.hostId,
     createdAt: room.createdAt,
+    gameConfig: room.gameConfig,
     players: [...room.players.values()],
     hunters: room.hunters || [],
     chat: room.chat.slice(-50),
@@ -166,6 +213,7 @@ async function api(req, res, url) {
           name: room.name,
           count: room.players.size,
           createdAt: room.createdAt,
+          gameConfig: room.gameConfig,
         })),
     });
     return true;
@@ -179,6 +227,7 @@ async function api(req, res, url) {
       createdAt: Date.now(),
       lastActive: Date.now(),
       hostId: "",
+      gameConfig: cleanGameConfig(body.gameConfig),
       players: new Map(),
       hunters: [],
       chat: [],

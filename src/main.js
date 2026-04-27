@@ -3100,10 +3100,22 @@ function renderRoomList(rooms) {
   rooms.forEach((room) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.innerHTML = `${escapeHtml(room.name || "Island Run")}<small>${room.count || 0} player${room.count === 1 ? "" : "s"} online</small>`;
+    button.innerHTML = `${escapeHtml(room.name || "Island Run")}<small>${room.count || 0} player${room.count === 1 ? "" : "s"} online - ${escapeHtml(getRoomRulesSummary(room.gameConfig))}</small>`;
     button.addEventListener("click", () => joinMultiplayerRoom(room.id));
     dom.roomList.append(button);
   });
+}
+
+function getRoomRulesSummary(gameConfig) {
+  if (!gameConfig) {
+    return "Normal rules";
+  }
+
+  const hunterCount = Array.isArray(gameConfig.hunterIds) ? gameConfig.hunterIds.length : DEFAULT_HUNTER_IDS.length;
+  const itemCount = Array.isArray(gameConfig.requiredItems) ? gameConfig.requiredItems.length : REQUIRED_ITEM_IDS.length;
+  const speed = Number(gameConfig.speedMultiplier || 1).toFixed(2);
+  const radar = gameConfig.radarMode === "none" ? "no radar" : "radar";
+  return `${hunterCount} hunters, ${itemCount} objectives, ${speed}x speed, ${radar}`;
 }
 
 async function createMultiplayerRoom() {
@@ -3116,9 +3128,10 @@ async function createMultiplayerRoom() {
   setMultiplayerStatus("Creating room...");
   try {
     const username = getMultiplayerUsername();
+    const gameConfig = buildCustomModeConfig();
     const data = await multiplayerFetch("/api/rooms", {
       method: "POST",
-      body: JSON.stringify({ username, name: getRoomNameInput() }),
+      body: JSON.stringify({ username, name: getRoomNameInput(), gameConfig }),
     });
     beginMultiplayerRun(data.room, data.playerId, username);
   } catch (error) {
@@ -3150,6 +3163,7 @@ async function joinMultiplayerRoom(roomId) {
 }
 
 function beginMultiplayerRun(room, playerId, username) {
+  const roomConfig = normalizeRoomGameConfig(room?.gameConfig);
   state.multiplayer.enabled = true;
   state.multiplayer.roomId = room?.id || "";
   state.multiplayer.roomName = room?.name || "Island Run";
@@ -3162,12 +3176,42 @@ function beginMultiplayerRun(room, playerId, username) {
   state.multiplayer.caught = false;
   state.multiplayer.caughtPlayers.clear();
   state.multiplayer.spectatingId = "";
-  state.gameMode = "normal";
+  state.gameMode = "custom";
+  state.customMode = roomConfig;
   applyMultiplayerRoom(room);
   dom.startScreen.classList.remove("active");
   resetGame();
-  setMessage(`Multiplayer room "${state.multiplayer.roomName}" joined. Press T to chat.`);
+  setMessage(`Multiplayer room "${state.multiplayer.roomName}" joined with custom rules. Press T to chat.`);
   syncMultiplayerUi();
+}
+
+function normalizeRoomGameConfig(config) {
+  const fallback = buildCustomModeConfig();
+  if (!config || typeof config !== "object") {
+    return fallback;
+  }
+
+  const radarMode = config.radarMode === "none" ? "none" : "start";
+  const hunterIds = Array.isArray(config.hunterIds) ? config.hunterIds.filter((id) => DEFAULT_HUNTER_IDS.includes(id)) : null;
+  const requiredItems = Array.isArray(config.requiredItems) ? config.requiredItems.filter((id) => REQUIRED_ITEM_IDS.includes(id)) : null;
+  const roomHunterIds = hunterIds ? [...new Set(hunterIds)] : [...fallback.hunterIds];
+  const rawRequiredItems = requiredItems || fallback.requiredItems;
+  const roomRequiredItems = radarMode === "none" ? rawRequiredItems.filter((id) => id !== "radar") : rawRequiredItems;
+  const fallbackRequiredItems =
+    radarMode === "none" ? fallback.requiredItems.filter((id) => id !== "radar") : fallback.requiredItems;
+
+  return {
+    ...createDefaultCustomMode(),
+    speedMultiplier: THREE.MathUtils.clamp(Number(config.speedMultiplier) || 1, 0.25, 3),
+    hearingMultiplier: THREE.MathUtils.clamp(Number(config.hearingMultiplier) || 1, 0.25, 3),
+    sightMultiplier: THREE.MathUtils.clamp(Number(config.sightMultiplier) || 1, 0.25, 3),
+    rangeMultiplier: THREE.MathUtils.clamp(Number(config.rangeMultiplier ?? config.sightMultiplier) || 1, 0.25, 3),
+    hunterIds: roomHunterIds,
+    requiredItems: requiredItems ? [...new Set(roomRequiredItems)] : [...fallbackRequiredItems],
+    radarMode,
+    custom: true,
+    label: "Room Custom",
+  };
 }
 
 function setMultiplayerStatus(text) {
