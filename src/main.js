@@ -40,9 +40,12 @@ const GRASS_MODEL_SOURCE_URL = "https://pixabay.com/3d-models/grass-low-poly-nat
 const DEFAULT_HUNTER_IDS = ["epstein", "hawking", "trump"];
 const RADAR_SCAN_RANGE = 115;
 const RADAR_BATTERY_MAX = 100;
-const RADAR_BATTERY_START = 45;
-const RADAR_BATTERY_PICKUP = 35;
-const RADAR_BATTERY_DRAIN_PER_SECOND = 8;
+const RADAR_BATTERY_START = 68;
+const RADAR_BATTERY_PICKUP = 42;
+const RADAR_BATTERY_DRAIN_PER_SECOND = 4.4;
+const MULTIPLAYER_SYNC_INTERVAL = 0.16;
+const MULTIPLAYER_ROOM_REFRESH_INTERVAL = 8500;
+const MULTIPLAYER_API_BASE = getMultiplayerApiBase();
 
 const GAME_MODES = {
   normal: {
@@ -107,6 +110,20 @@ function getInitialQualityMode() {
 
 function normalizeQualityMode(mode) {
   return ["low", "normal", "high", "ultra"].includes(mode) ? mode : "low";
+}
+
+function getMultiplayerApiBase() {
+  const params = new URLSearchParams(window.location.search);
+  const configured = params.get("server");
+  if (configured) {
+    return configured.replace(/\/$/, "");
+  }
+
+  if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+    return window.location.origin;
+  }
+
+  return "";
 }
 
 const ISLAND_OUTLINE = [
@@ -249,6 +266,14 @@ const dom = {
   radarMap: document.querySelector("#radar-map"),
   radarBlips: document.querySelector("#radar-blips"),
   radarBatteryText: document.querySelector("#radar-battery-text"),
+  radarBatteryFill: document.querySelector("#radar-battery-fill"),
+  multiplayerHud: document.querySelector("#multiplayer-hud"),
+  multiplayerRoomName: document.querySelector("#multiplayer-room-name"),
+  multiplayerPlayerCount: document.querySelector("#multiplayer-player-count"),
+  reviveCount: document.querySelector("#revive-count"),
+  chat: document.querySelector("#multiplayer-chat"),
+  chatMessages: document.querySelector("#chat-messages"),
+  chatInput: document.querySelector("#chat-input"),
   readout: document.querySelector("#readout-panel"),
   readoutTitle: document.querySelector("#readout-title"),
   readoutBody: document.querySelector("#readout-body"),
@@ -277,6 +302,12 @@ const dom = {
   musicValue: document.querySelector("#music-value"),
   sensitivitySlider: document.querySelector("#sensitivity-slider"),
   sensitivityValue: document.querySelector("#sensitivity-value"),
+  multiplayerUsername: document.querySelector("#multiplayer-username"),
+  multiplayerRoomInput: document.querySelector("#multiplayer-room-input"),
+  createRoomButton: document.querySelector("#create-room-button"),
+  refreshRoomsButton: document.querySelector("#refresh-rooms-button"),
+  multiplayerStatus: document.querySelector("#multiplayer-status"),
+  roomList: document.querySelector("#room-list"),
   endKicker: document.querySelector("#end-kicker"),
   endTitle: document.querySelector("#end-title"),
   endCopy: document.querySelector("#end-copy"),
@@ -318,6 +349,24 @@ const state = {
     startAt: 0,
     elapsed: 0,
     lastDisplayAt: 0,
+  },
+  multiplayer: {
+    apiBase: MULTIPLAYER_API_BASE,
+    available: false,
+    enabled: false,
+    connecting: false,
+    roomId: "",
+    roomName: "",
+    playerId: "",
+    username: "Runner",
+    room: null,
+    syncClock: 0,
+    syncing: false,
+    roomRefreshAt: 0,
+    chatOpen: false,
+    lastChatSignature: "",
+    reviveCharges: 0,
+    caught: false,
   },
   input: {
     dragging: false,
@@ -381,12 +430,14 @@ const colliders = [];
 const lineOfSightMeshes = [];
 const collectibles = [];
 const radarBatteryPickups = [];
+const revivePickups = [];
 const stairways = [];
 const floorZones = [];
 const hideSpots = [];
 const grassFields = [];
 const heldItemModels = new Map();
 const heldItemRoot = new THREE.Group();
+const remotePlayers = new Map();
 const environment = {
   hemi: null,
   moon: null,
@@ -463,6 +514,7 @@ syncInventoryUI();
 syncSettingsFromControls();
 syncQualityButtons();
 syncCustomControls();
+initMultiplayerUi();
 updateTimerDisplay();
 window.setInterval(updateTimer, LOW_SPEC_MODE ? 150 : 50);
 animate();
@@ -485,6 +537,7 @@ function initWorld() {
   addHidingPlaces();
   addCollectibles();
   addRadarBatteryPickups();
+  addRevivePickups();
   addHunters();
   resetHunters();
 }
@@ -1641,6 +1694,41 @@ function addRadarBatteryPickup({ x, z, floor }) {
   });
 }
 
+function addRevivePickups() {
+  [
+    { x: 38, z: -55, floor: 0 },
+    { x: 53, z: -58, floor: FLOOR_HEIGHT },
+    { x: 13, z: 39, floor: 0 },
+    { x: 24, z: 58, floor: FLOOR_HEIGHT * 2 },
+    { x: -70, z: 50, floor: 0 },
+    { x: -59, z: 57, floor: FLOOR_HEIGHT },
+    { x: -53, z: -48, floor: 0 },
+    { x: 83, z: -25, floor: 0 },
+    { x: 92, z: -16, floor: FLOOR_HEIGHT },
+    { x: -20, z: -18, floor: 0 },
+    { x: -88, z: 16, floor: 0 },
+    { x: 35, z: 5, floor: 0 },
+  ].forEach(addRevivePickup);
+}
+
+function addRevivePickup({ x, z, floor }) {
+  const mesh = buildReviveDrug();
+  const baseY = sampleTerrainHeight(x, z) + floor + 0.72;
+  mesh.position.set(x, baseY, z);
+  scene.add(mesh);
+  const highlight = createCollectibleHighlight(mesh);
+  const marker = createCollectibleMarker();
+  revivePickups.push({
+    name: "Revive drugs",
+    mesh,
+    highlight,
+    marker,
+    baseY,
+    floor,
+    collected: false,
+  });
+}
+
 function addHidingPlaces() {
   [
     { name: "South Barracks locker", x: 36, z: -52, floor: 0, rotation: Math.PI * 0.5 },
@@ -2086,6 +2174,44 @@ function buildBattery() {
     new THREE.MeshStandardMaterial({ color: 0x7fd5b8, emissive: 0x0a2d23, roughness: 0.5 }),
   );
   group.add(band);
+  return group;
+}
+
+function buildReviveDrug() {
+  const group = new THREE.Group();
+  const caseMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(0.82, 0.32, 0.52),
+    new THREE.MeshStandardMaterial({
+      color: 0xf1f6f0,
+      emissive: 0x1a241f,
+      roughness: 0.5,
+      metalness: 0.08,
+    }),
+  );
+  caseMesh.castShadow = true;
+  group.add(caseMesh);
+
+  const crossMaterial = new THREE.MeshBasicMaterial({ color: 0xd94343 });
+  const barA = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.06, 0.04), crossMaterial);
+  const barB = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.52, 0.04), crossMaterial.clone());
+  barA.position.set(0, 0.18, 0.28);
+  barB.position.set(0, 0.18, 0.28);
+  group.add(barA, barB);
+
+  const vial = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.09, 0.09, 0.58, 12),
+    new THREE.MeshStandardMaterial({
+      color: 0x8df1d2,
+      emissive: 0x123b2f,
+      roughness: 0.26,
+      metalness: 0.12,
+      transparent: true,
+      opacity: 0.82,
+    }),
+  );
+  vial.rotation.z = Math.PI / 2;
+  vial.position.set(0, -0.32, 0);
+  group.add(vial);
   return group;
 }
 
@@ -2690,6 +2816,10 @@ function attachEvents() {
   });
 
   window.addEventListener("keydown", (event) => {
+    if (handleMultiplayerChatKey(event)) {
+      return;
+    }
+
     const playing = state.started && !state.gameOver && !state.victory;
     const gameplayKey = [
       "Space",
@@ -2699,6 +2829,7 @@ function attachEvents() {
       "ArrowRight",
       "KeyF",
       "KeyG",
+      "KeyT",
       "KeyQ",
       "Digit1",
       "Digit2",
@@ -2747,6 +2878,9 @@ function attachEvents() {
     if (event.code === "KeyQ" && !event.repeat) {
       useSelectedInventoryItem();
     }
+    if (event.code === "KeyT" && !event.repeat) {
+      openChat();
+    }
     if (event.code.startsWith("Digit")) {
       selectInventorySlot(Number(event.code.replace("Digit", "")) - 1);
     }
@@ -2756,6 +2890,11 @@ function attachEvents() {
   });
 
   window.addEventListener("keyup", (event) => {
+    if (event.target === dom.chatInput || state.multiplayer.chatOpen) {
+      keys.delete(event.code);
+      return;
+    }
+
     const playing = state.started && !state.gameOver && !state.victory;
     const gameplayKey = ["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "KeyF", "KeyG", "KeyQ"].includes(event.code);
 
@@ -2794,6 +2933,22 @@ function attachEvents() {
 
   dom.restartButton.addEventListener("click", () => {
     resetGame();
+  });
+
+  dom.createRoomButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    createMultiplayerRoom();
+  });
+
+  dom.refreshRoomsButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    refreshRooms();
+  });
+
+  dom.chatInput?.addEventListener("keydown", (event) => {
+    if (handleMultiplayerChatKey(event)) {
+      return;
+    }
   });
 
   dom.musicVolume.addEventListener("input", () => {
@@ -2845,7 +3000,481 @@ function attachEvents() {
   });
 }
 
+function initMultiplayerUi() {
+  syncMultiplayerUi();
+  if (!state.multiplayer.apiBase) {
+    setMultiplayerStatus("Multiplayer needs the server. Run npm start, then open http://localhost:8787/");
+    if (dom.createRoomButton) dom.createRoomButton.disabled = true;
+    if (dom.refreshRoomsButton) dom.refreshRoomsButton.disabled = true;
+    return;
+  }
+
+  refreshRooms();
+  window.setInterval(() => {
+    if (!state.started && !state.multiplayer.connecting) {
+      refreshRooms(false);
+    }
+  }, MULTIPLAYER_ROOM_REFRESH_INTERVAL);
+}
+
+function multiplayerEndpoint(path) {
+  return `${state.multiplayer.apiBase}${path}`;
+}
+
+async function multiplayerFetch(path, options = {}) {
+  const headers = {
+    ...(options.body ? { "content-type": "application/json" } : {}),
+    ...(options.headers || {}),
+  };
+  const response = await fetch(multiplayerEndpoint(path), { ...options, headers });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || "Multiplayer request failed.");
+  }
+  return payload;
+}
+
+function getMultiplayerUsername() {
+  const raw = dom.multiplayerUsername?.value || "Runner";
+  return raw.replace(/[^\w .-]/g, "").trim().slice(0, 24) || "Runner";
+}
+
+function getRoomNameInput() {
+  const raw = dom.multiplayerRoomInput?.value || "Island Run";
+  return raw.replace(/[^\w .-]/g, "").trim().slice(0, 28) || "Island Run";
+}
+
+async function refreshRooms(showStatus = true) {
+  if (!state.multiplayer.apiBase || state.multiplayer.connecting) {
+    return;
+  }
+
+  if (showStatus) {
+    setMultiplayerStatus("Looking for rooms...");
+  }
+
+  try {
+    const data = await multiplayerFetch("/api/rooms");
+    state.multiplayer.available = true;
+    renderRoomList(data.rooms || []);
+    if (showStatus) {
+      setMultiplayerStatus(data.rooms?.length ? "Rooms online. Join one or create your own." : "No rooms yet. Create one.");
+    }
+  } catch (error) {
+    state.multiplayer.available = false;
+    renderRoomList([]);
+    setMultiplayerStatus("Server not reachable. Use the Render URL or open http://localhost:8787/");
+  }
+}
+
+function renderRoomList(rooms) {
+  if (!dom.roomList) {
+    return;
+  }
+
+  dom.roomList.textContent = "";
+  rooms.forEach((room) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.innerHTML = `${escapeHtml(room.name || "Island Run")}<small>${room.count || 0} player${room.count === 1 ? "" : "s"} online</small>`;
+    button.addEventListener("click", () => joinMultiplayerRoom(room.id));
+    dom.roomList.append(button);
+  });
+}
+
+async function createMultiplayerRoom() {
+  if (!state.multiplayer.apiBase || state.multiplayer.connecting) {
+    setMultiplayerStatus("Open the game from the multiplayer server first.");
+    return;
+  }
+
+  state.multiplayer.connecting = true;
+  setMultiplayerStatus("Creating room...");
+  try {
+    const username = getMultiplayerUsername();
+    const data = await multiplayerFetch("/api/rooms", {
+      method: "POST",
+      body: JSON.stringify({ username, name: getRoomNameInput() }),
+    });
+    beginMultiplayerRun(data.room, data.playerId, username);
+  } catch (error) {
+    setMultiplayerStatus(error.message || "Could not create room.");
+  } finally {
+    state.multiplayer.connecting = false;
+  }
+}
+
+async function joinMultiplayerRoom(roomId) {
+  if (!roomId || state.multiplayer.connecting) {
+    return;
+  }
+
+  state.multiplayer.connecting = true;
+  setMultiplayerStatus("Joining room...");
+  try {
+    const username = getMultiplayerUsername();
+    const data = await multiplayerFetch("/api/join", {
+      method: "POST",
+      body: JSON.stringify({ roomId, username }),
+    });
+    beginMultiplayerRun(data.room, data.playerId, username);
+  } catch (error) {
+    setMultiplayerStatus(error.message || "Could not join room.");
+  } finally {
+    state.multiplayer.connecting = false;
+  }
+}
+
+function beginMultiplayerRun(room, playerId, username) {
+  state.multiplayer.enabled = true;
+  state.multiplayer.roomId = room?.id || "";
+  state.multiplayer.roomName = room?.name || "Island Run";
+  state.multiplayer.playerId = playerId || "";
+  state.multiplayer.username = username || "Runner";
+  state.multiplayer.room = room || null;
+  state.multiplayer.syncClock = MULTIPLAYER_SYNC_INTERVAL;
+  state.multiplayer.reviveCharges = 0;
+  state.multiplayer.caught = false;
+  state.gameMode = "normal";
+  applyMultiplayerRoom(room);
+  dom.startScreen.classList.remove("active");
+  resetGame();
+  setMessage(`Multiplayer room "${state.multiplayer.roomName}" joined. Press T to chat.`);
+  syncMultiplayerUi();
+}
+
+function setMultiplayerStatus(text) {
+  if (dom.multiplayerStatus) {
+    dom.multiplayerStatus.textContent = text;
+  }
+}
+
+function syncMultiplayerUi() {
+  document.body.classList.toggle("multiplayer-on", state.multiplayer.enabled);
+  if (dom.multiplayerRoomName) {
+    dom.multiplayerRoomName.textContent = state.multiplayer.enabled ? state.multiplayer.roomName : "Solo run";
+  }
+  const playerCount = state.multiplayer.room?.players?.length || 0;
+  if (dom.multiplayerPlayerCount) {
+    dom.multiplayerPlayerCount.textContent = `${playerCount} online`;
+  }
+  if (dom.reviveCount) {
+    dom.reviveCount.textContent = `Revives ${state.multiplayer.reviveCharges}`;
+  }
+  if (dom.chat) {
+    dom.chat.classList.toggle("open", state.multiplayer.chatOpen);
+  }
+}
+
+function handleMultiplayerChatKey(event) {
+  if (!state.multiplayer.enabled) {
+    return false;
+  }
+
+  if (state.multiplayer.chatOpen) {
+    if (event.code === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      sendChatMessage();
+      return true;
+    }
+    if (event.code === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeChat();
+      return true;
+    }
+    if (event.target === dom.chatInput) {
+      event.stopPropagation();
+      return false;
+    }
+  }
+
+  const playing = state.started && !state.victory;
+  if (playing && event.code === "KeyT" && !event.repeat) {
+    event.preventDefault();
+    event.stopPropagation();
+    openChat();
+    return true;
+  }
+
+  return false;
+}
+
+function openChat() {
+  if (!state.multiplayer.enabled || !dom.chatInput) {
+    return;
+  }
+
+  state.multiplayer.chatOpen = true;
+  document.exitPointerLock();
+  stopLookDrag();
+  keys.clear();
+  syncMultiplayerUi();
+  dom.chatInput.focus({ preventScroll: true });
+}
+
+function closeChat() {
+  state.multiplayer.chatOpen = false;
+  syncMultiplayerUi();
+  dom.chatInput?.blur();
+  if (state.started && !state.gameOver && !state.victory) {
+    renderer.domElement.focus({ preventScroll: true });
+  }
+}
+
+async function sendChatMessage() {
+  const text = (dom.chatInput?.value || "").trim();
+  if (!text) {
+    closeChat();
+    return;
+  }
+
+  if (dom.chatInput) {
+    dom.chatInput.value = "";
+  }
+  closeChat();
+
+  try {
+    const data = await multiplayerFetch("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({
+        roomId: state.multiplayer.roomId,
+        playerId: state.multiplayer.playerId,
+        text,
+      }),
+    });
+    if (state.multiplayer.room) {
+      state.multiplayer.room.chat = data.chat || state.multiplayer.room.chat || [];
+    }
+    renderChatMessages(state.multiplayer.room?.chat || data.chat || []);
+  } catch (error) {
+    setMessage("Chat failed. Server connection dropped.");
+  }
+}
+
+function renderChatMessages(chat = []) {
+  if (!dom.chatMessages) {
+    return;
+  }
+  const visible = chat.slice(-6);
+  const signature = visible.map((message) => `${message.id}:${message.text}`).join("|");
+  if (signature === state.multiplayer.lastChatSignature) {
+    return;
+  }
+  state.multiplayer.lastChatSignature = signature;
+  dom.chatMessages.textContent = "";
+  visible.forEach((message) => {
+    const line = document.createElement("div");
+    line.innerHTML = `<strong>${escapeHtml(message.username || "System")}:</strong> ${escapeHtml(message.text || "")}`;
+    dom.chatMessages.append(line);
+  });
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[char]);
+}
+
+function updateMultiplayer(delta) {
+  syncRemotePlayerLabels();
+  if (!state.multiplayer.enabled || !state.multiplayer.roomId || !state.multiplayer.playerId) {
+    return;
+  }
+
+  state.multiplayer.syncClock += delta;
+  if (state.multiplayer.syncClock < MULTIPLAYER_SYNC_INTERVAL || state.multiplayer.syncing) {
+    return;
+  }
+
+  state.multiplayer.syncClock = 0;
+  postMultiplayerState();
+}
+
+async function postMultiplayerState() {
+  state.multiplayer.syncing = true;
+  try {
+    const data = await multiplayerFetch("/api/state", {
+      method: "POST",
+      body: JSON.stringify({
+        roomId: state.multiplayer.roomId,
+        playerId: state.multiplayer.playerId,
+        username: state.multiplayer.username,
+        x: state.player.position.x,
+        y: state.player.position.y,
+        z: state.player.position.z,
+        yaw: state.yaw,
+        caught: state.multiplayer.caught,
+        victory: state.victory,
+      }),
+    });
+    applyMultiplayerRoom(data.room);
+  } catch (error) {
+    setMessage("Multiplayer server connection dropped.");
+  } finally {
+    state.multiplayer.syncing = false;
+  }
+}
+
+function applyMultiplayerRoom(room) {
+  if (!room) {
+    return;
+  }
+
+  state.multiplayer.room = room;
+  state.multiplayer.roomName = room.name || state.multiplayer.roomName || "Island Run";
+  renderChatMessages(room.chat || []);
+
+  const localPlayer = room.players?.find((player) => player.id === state.multiplayer.playerId);
+  if (localPlayer && state.multiplayer.caught && !localPlayer.caught && state.gameOver) {
+    reviveLocalPlayer();
+  }
+
+  syncRemotePlayers(room.players || []);
+  syncMultiplayerUi();
+}
+
+function syncRemotePlayers(players) {
+  const liveIds = new Set();
+  players.forEach((player) => {
+    if (!player || player.id === state.multiplayer.playerId) {
+      return;
+    }
+
+    liveIds.add(player.id);
+    let entity = remotePlayers.get(player.id);
+    if (!entity) {
+      entity = createRemotePlayerEntity(player);
+      remotePlayers.set(player.id, entity);
+    }
+    entity.username = player.username || "Runner";
+    entity.caught = Boolean(player.caught);
+    entity.target.set(Number(player.x) || 0, (Number(player.y) || PLAYER_HEIGHT) - PLAYER_HEIGHT, Number(player.z) || 0);
+    entity.yaw = Number(player.yaw) || 0;
+    entity.group.visible = true;
+    entity.label.textContent = entity.caught ? `${entity.username} needs revive` : entity.username;
+    entity.label.classList.toggle("caught", entity.caught);
+    entity.group.traverse((child) => {
+      if (child.material) {
+        child.material.opacity = entity.caught ? 0.42 : 1;
+        child.material.transparent = entity.caught;
+      }
+    });
+  });
+
+  for (const [id, entity] of remotePlayers) {
+    if (!liveIds.has(id)) {
+      removeRemotePlayerEntity(id, entity);
+    }
+  }
+}
+
+function createRemotePlayerEntity(player) {
+  const group = new THREE.Group();
+  const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0x7bd7bd, roughness: 0.62, metalness: 0.04 });
+  const trimMaterial = new THREE.MeshStandardMaterial({ color: 0x273436, roughness: 0.74 });
+
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.42, 1.15, LOW_SPEC_MODE ? 8 : 14), bodyMaterial);
+  body.position.y = 0.82;
+  group.add(body);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, LOW_SPEC_MODE ? 10 : 16, LOW_SPEC_MODE ? 8 : 12), trimMaterial);
+  head.position.y = 1.55;
+  group.add(head);
+
+  const backpack = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.68, 0.18), trimMaterial.clone());
+  backpack.position.set(0, 0.95, 0.37);
+  group.add(backpack);
+
+  group.position.set(Number(player.x) || 0, (Number(player.y) || PLAYER_HEIGHT) - PLAYER_HEIGHT, Number(player.z) || 0);
+  group.rotation.y = Number(player.yaw) || 0;
+  scene.add(group);
+
+  const label = document.createElement("div");
+  label.className = "player-name-tag";
+  label.textContent = player.username || "Runner";
+  document.body.append(label);
+
+  return {
+    group,
+    label,
+    target: group.position.clone(),
+    username: player.username || "Runner",
+    yaw: Number(player.yaw) || 0,
+    caught: Boolean(player.caught),
+  };
+}
+
+function removeRemotePlayerEntity(id, entity) {
+  scene.remove(entity.group);
+  entity.group.traverse((child) => {
+    child.geometry?.dispose?.();
+    if (Array.isArray(child.material)) {
+      child.material.forEach((material) => material.dispose?.());
+    } else {
+      child.material?.dispose?.();
+    }
+  });
+  entity.label.remove();
+  remotePlayers.delete(id);
+}
+
+function syncRemotePlayerLabels() {
+  const width = window.innerWidth || 1;
+  const height = window.innerHeight || 1;
+  const labelPosition = new THREE.Vector3();
+
+  remotePlayers.forEach((entity) => {
+    entity.group.position.lerp(entity.target, 0.24);
+    entity.group.rotation.y = lerpAngle(entity.group.rotation.y, entity.yaw, 0.22);
+    labelPosition.copy(entity.group.position);
+    labelPosition.y += 2.18;
+
+    const distance = camera.position.distanceTo(labelPosition);
+    const projected = labelPosition.clone().project(camera);
+    const visible =
+      state.multiplayer.enabled &&
+      projected.z < 1 &&
+      projected.x > -1 &&
+      projected.x < 1 &&
+      projected.y > -1 &&
+      projected.y < 1 &&
+      distance < 62 &&
+      hasClearLine(camera.position, labelPosition, 0.2);
+
+    entity.label.style.display = visible ? "block" : "none";
+    if (visible) {
+      entity.label.style.left = `${(projected.x * 0.5 + 0.5) * width}px`;
+      entity.label.style.top = `${(-projected.y * 0.5 + 0.5) * height}px`;
+    }
+  });
+}
+
+function leaveMultiplayerRoom() {
+  if (!state.multiplayer.enabled) {
+    return;
+  }
+
+  state.multiplayer.enabled = false;
+  state.multiplayer.roomId = "";
+  state.multiplayer.playerId = "";
+  state.multiplayer.room = null;
+  state.multiplayer.caught = false;
+  state.multiplayer.reviveCharges = 0;
+  state.multiplayer.chatOpen = false;
+  for (const [id, entity] of remotePlayers) {
+    removeRemotePlayerEntity(id, entity);
+  }
+  syncMultiplayerUi();
+}
+
 function startGame(mode = "normal") {
+  leaveMultiplayerRoom();
   state.gameMode = GAME_MODES[mode] ? mode : "normal";
   if (state.gameMode === "custom") {
     state.customMode = buildCustomModeConfig();
@@ -3015,6 +3644,16 @@ function tryInteract() {
     return;
   }
 
+  if (state.interactive.type === "revivePickup") {
+    collectRevivePickup(state.interactive.pickup);
+    return;
+  }
+
+  if (state.interactive.type === "reviveAlly") {
+    reviveAlly(state.interactive.player);
+    return;
+  }
+
   const item = state.interactive.item;
   const missing = getMissingRequirements(item);
   if (missing.length > 0) {
@@ -3072,6 +3711,62 @@ function collectRadarBatteryPickup(pickup) {
   pickup.marker.visible = false;
   addRadarBatteryCharge(RADAR_BATTERY_PICKUP);
   setMessage(`Radar battery pack loaded. Charge: ${Math.ceil(state.player.radarBattery)}%.`);
+}
+
+function collectRevivePickup(pickup) {
+  if (!pickup || pickup.collected || !state.multiplayer.enabled) {
+    return;
+  }
+
+  pickup.collected = true;
+  pickup.mesh.visible = false;
+  pickup.highlight.visible = false;
+  pickup.marker.visible = false;
+  state.multiplayer.reviveCharges += 1;
+  syncMultiplayerUi();
+  setMessage(`Revive drugs packed. Charges: ${state.multiplayer.reviveCharges}.`);
+}
+
+async function reviveAlly(player) {
+  if (!state.multiplayer.enabled || !player?.id) {
+    return;
+  }
+
+  if (state.multiplayer.reviveCharges <= 0) {
+    setMessage("Find revive drugs before helping them up.");
+    return;
+  }
+
+  try {
+    const data = await multiplayerFetch("/api/revive", {
+      method: "POST",
+      body: JSON.stringify({
+        roomId: state.multiplayer.roomId,
+        playerId: state.multiplayer.playerId,
+        targetId: player.id,
+      }),
+    });
+    state.multiplayer.reviveCharges = Math.max(0, state.multiplayer.reviveCharges - 1);
+    applyMultiplayerRoom(data.room);
+    setMessage(`${player.username || "Ally"} revived.`);
+  } catch (error) {
+    setMessage("Revive failed. Get closer or reconnect to the room.");
+  }
+}
+
+function reviveLocalPlayer() {
+  state.gameOver = false;
+  state.multiplayer.caught = false;
+  dom.endScreen.classList.remove("active");
+  state.player.position.copy(findSafePosition(state.player.position, PLAYER_RADIUS));
+  state.player.sound = 0.08;
+  state.player.hiding = false;
+  state.player.hiddenSpot = null;
+  state.timer.startAt = performance.now() - state.timer.elapsed;
+  state.timer.running = true;
+  setMessage("You were revived. Move before they come back.");
+  syncMouseUi();
+  ensureAudio();
 }
 
 function addRadarBatteryCharge(amount) {
@@ -3480,6 +4175,7 @@ function animate(now = 0) {
 
   const delta = Math.min(CLOCK.getDelta(), 0.05);
   updateTimer();
+  updateMultiplayer(delta);
 
   if (state.started && !state.gameOver && !state.victory) {
     updateKeyboardLook(delta);
@@ -3492,6 +4188,7 @@ function animate(now = 0) {
     updateHeldItemView(delta);
     updateCollectibles(delta);
     updateRadarBatteryPickups(delta);
+    updateRevivePickups(delta);
     updateHidingPlaces(delta);
     updateGrassWind(delta);
     updateInteractions();
@@ -3687,6 +4384,33 @@ function updateRadarBatteryPickups(delta) {
   });
 }
 
+function updateRevivePickups(delta) {
+  revivePickups.forEach((pickup, index) => {
+    if (!state.multiplayer.enabled || pickup.collected) {
+      pickup.highlight.visible = false;
+      pickup.marker.visible = false;
+      if (!state.multiplayer.enabled) {
+        pickup.mesh.visible = false;
+      }
+      return;
+    }
+
+    pickup.mesh.visible = true;
+    pickup.mesh.rotation.y += delta * (1.1 + index * 0.05);
+    pickup.mesh.position.y = pickup.baseY + Math.sin(CLOCK.elapsedTime * 2.4 + index) * 0.12;
+    const visible = isRevivePickupVisible(pickup);
+    pickup.highlight.visible = visible;
+    pickup.marker.visible = visible;
+    if (visible) {
+      pickup.highlight.update();
+      pickup.highlight.material.color.setHex(0xff8f8f);
+      pickup.marker.position.copy(pickup.mesh.position);
+      pickup.marker.position.y += 0.06;
+      pickup.marker.children.forEach((child) => child.material.color.setHex(0xff8f8f));
+    }
+  });
+}
+
 function updateCollectibleHighlight(item) {
   const visible = isCollectibleVisible(item);
   item.highlight.visible = visible;
@@ -3763,6 +4487,9 @@ function updateRadarMap() {
   if (dom.radarBatteryText) {
     dom.radarBatteryText.textContent = `${Math.ceil(state.player.radarBattery)}%`;
   }
+  if (dom.radarBatteryFill) {
+    dom.radarBatteryFill.style.width = `${THREE.MathUtils.clamp(state.player.radarBattery, 0, 100)}%`;
+  }
   if (!dom.radarBlips) {
     return;
   }
@@ -3798,6 +4525,9 @@ function clearRadarMap() {
   }
   if (dom.radarBatteryText) {
     dom.radarBatteryText.textContent = `${Math.ceil(state.player.radarBattery)}%`;
+  }
+  if (dom.radarBatteryFill) {
+    dom.radarBatteryFill.style.width = `${THREE.MathUtils.clamp(state.player.radarBattery, 0, 100)}%`;
   }
 }
 
@@ -4138,6 +4868,12 @@ function updateInteractions() {
     if (lookedBattery) {
       state.interactive = { type: "radarBattery", pickup: lookedBattery };
       state.prompt = "Press E to take radar battery";
+    } else {
+      const lookedRevive = getLookedAtRevivePickup();
+      if (lookedRevive) {
+        state.interactive = { type: "revivePickup", pickup: lookedRevive };
+        state.prompt = "Press E to take revive drugs";
+      }
     }
   }
 
@@ -4149,7 +4885,22 @@ function updateInteractions() {
       const nearbyBattery = getNearbyRadarBatteryPickup();
       if (nearbyBattery) {
         state.prompt = "Look directly at radar battery to pick it up";
+      } else {
+        const nearbyRevive = getNearbyRevivePickup();
+        if (nearbyRevive) {
+          state.prompt = "Look directly at revive drugs to pick them up";
+        }
       }
+    }
+  }
+
+  if (!state.interactive) {
+    const caughtAlly = getNearbyCaughtAlly();
+    if (caughtAlly) {
+      state.interactive = { type: "reviveAlly", player: caughtAlly };
+      state.prompt = state.multiplayer.reviveCharges > 0
+        ? `Press E to revive ${caughtAlly.username || "ally"}`
+        : "Find revive drugs before reviving your ally";
     }
   }
 
@@ -4236,6 +4987,38 @@ function getLookedAtRadarBatteryPickup() {
   return best;
 }
 
+function getLookedAtRevivePickup() {
+  if (!state.multiplayer.enabled) {
+    return null;
+  }
+
+  raycaster.setFromCamera({ x: 0, y: 0 }, camera);
+  raycaster.near = 0;
+  raycaster.far = PICKUP_DISTANCE;
+  let best = null;
+  let bestDistance = Infinity;
+
+  revivePickups.forEach((pickup) => {
+    if (pickup.collected || !pickup.mesh.visible || !isRevivePickupVisible(pickup, PICKUP_DISTANCE + 0.75)) {
+      return;
+    }
+
+    const hits = raycaster.intersectObject(pickup.mesh, true);
+    if (hits.length === 0 || hits[0].distance > PICKUP_DISTANCE || hits[0].distance >= bestDistance) {
+      return;
+    }
+
+    const blockers = raycaster.intersectObjects(lineOfSightMeshes, false);
+    const blocked = blockers.some((hit) => hit.distance < hits[0].distance - 0.16);
+    if (!blocked) {
+      best = pickup;
+      bestDistance = hits[0].distance;
+    }
+  });
+
+  return best;
+}
+
 function isCollectibleVisible(item, maxDistance = 26) {
   if (item.collected || !item.mesh.visible || !isCollectibleOnActiveFloor(item)) {
     return false;
@@ -4259,6 +5042,30 @@ function isCollectibleVisible(item, maxDistance = 26) {
 
 function isRadarBatteryPickupVisible(pickup, maxDistance = 24) {
   if (pickup.collected || !pickup.mesh.visible || Math.abs(pickup.floor - state.player.floorHeight) > 0.45) {
+    return false;
+  }
+
+  const distance = camera.position.distanceTo(pickup.mesh.position);
+  if (distance > maxDistance) {
+    return false;
+  }
+
+  const toItem = pickup.mesh.position.clone().sub(camera.position).normalize();
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  if (forward.dot(toItem) < 0.54) {
+    return false;
+  }
+
+  return hasClearLine(camera.position, pickup.mesh.position, 0.18);
+}
+
+function isRevivePickupVisible(pickup, maxDistance = 24) {
+  if (
+    !state.multiplayer.enabled ||
+    pickup.collected ||
+    !pickup.mesh.visible ||
+    Math.abs(pickup.floor - state.player.floorHeight) > 0.45
+  ) {
     return false;
   }
 
@@ -4309,6 +5116,57 @@ function getNearbyRadarBatteryPickup() {
     const distance = state.player.position.distanceTo(pickup.mesh.position);
     if (distance < PICKUP_DISTANCE && distance < bestDistance) {
       best = pickup;
+      bestDistance = distance;
+    }
+  });
+
+  return best;
+}
+
+function getNearbyRevivePickup() {
+  if (!state.multiplayer.enabled) {
+    return null;
+  }
+
+  let best = null;
+  let bestDistance = Infinity;
+
+  revivePickups.forEach((pickup) => {
+    if (pickup.collected || !pickup.mesh.visible || !isRevivePickupVisible(pickup, PICKUP_DISTANCE + 1.2)) {
+      return;
+    }
+
+    const distance = state.player.position.distanceTo(pickup.mesh.position);
+    if (distance < PICKUP_DISTANCE && distance < bestDistance) {
+      best = pickup;
+      bestDistance = distance;
+    }
+  });
+
+  return best;
+}
+
+function getNearbyCaughtAlly() {
+  if (!state.multiplayer.enabled) {
+    return null;
+  }
+
+  let best = null;
+  let bestDistance = Infinity;
+  remotePlayers.forEach((entity, id) => {
+    if (!entity.caught) {
+      return;
+    }
+
+    const target = new THREE.Vector3();
+    entity.group.getWorldPosition(target);
+    target.y += PLAYER_HEIGHT * 0.5;
+    const distance = state.player.position.distanceTo(target);
+    if (distance < 3.8 && distance < bestDistance && hasClearLine(camera.position, target, 0.16)) {
+      best = {
+        id,
+        username: entity.username,
+      };
       bestDistance = distance;
     }
   });
@@ -4606,6 +5464,19 @@ function triggerLoss() {
   document.exitPointerLock();
   stopLookDrag();
   syncMouseUi();
+
+  if (state.multiplayer.enabled) {
+    state.multiplayer.caught = true;
+    postMultiplayerState();
+    dom.endKicker.textContent = "Caught";
+    dom.endTitle.textContent = "Wait for a revive.";
+    dom.endCopy.textContent = `Run paused at ${formatRunTime(state.timer.elapsed)}. A teammate needs revive drugs to pick you up.`;
+    dom.endScreen.classList.add("active");
+    setMessage("You were caught. A teammate can revive you with revive drugs.");
+    syncMultiplayerUi();
+    return;
+  }
+
   dom.endKicker.textContent = "Caught";
   dom.endTitle.textContent = "He heard you.";
   dom.endCopy.textContent = `Run ended at ${formatRunTime(state.timer.elapsed)}. Reset and keep your steps under control.`;
@@ -4663,6 +5534,9 @@ function resetGame() {
   state.inventory.magnifierOn = false;
   state.inventory.heldBob = 0;
   state.items = createStartingItems(modeConfig);
+  if (state.multiplayer.enabled) {
+    state.multiplayer.caught = false;
+  }
   state.code.value = generateSafeCode();
   state.code.active = false;
   state.code.item = null;
@@ -4693,6 +5567,12 @@ function resetGame() {
   radarBatteryPickups.forEach((pickup) => {
     pickup.collected = false;
     pickup.mesh.visible = true;
+    pickup.highlight.visible = false;
+    pickup.marker.visible = false;
+  });
+  revivePickups.forEach((pickup) => {
+    pickup.collected = false;
+    pickup.mesh.visible = state.multiplayer.enabled;
     pickup.highlight.visible = false;
     pickup.marker.visible = false;
   });

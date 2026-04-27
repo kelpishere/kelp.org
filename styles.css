@@ -273,6 +273,23 @@ body.radar-on .radar-map {
   color: #8bffd0;
 }
 
+.radar-battery-bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(92, 255, 184, 0.12);
+  border: 1px solid rgba(92, 255, 184, 0.18);
+}
+
+.radar-battery-bar span {
+  display: block;
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #d86d50, #e9c86b, #77f0bd);
+  transition: width 120ms ease;
+}
+
 .radar-scope {
   position: relative;
   aspect-ratio: 1;
@@ -365,6 +382,112 @@ body.radar-on .radar-map {
 
 .radar-legend .yellow {
   color: #ffdf69;
+}
+
+.multiplayer-hud {
+  grid-column: 2;
+  align-self: end;
+  justify-self: center;
+  min-width: min(100%, 250px);
+  padding: 12px 14px;
+  display: none;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+body.multiplayer-on .multiplayer-hud {
+  display: block;
+}
+
+#multiplayer-room-name {
+  color: var(--text);
+  font-weight: 700;
+}
+
+#revive-count {
+  color: var(--safe);
+}
+
+.multiplayer-chat {
+  position: fixed;
+  left: 50%;
+  bottom: 92px;
+  z-index: 12;
+  width: min(520px, calc(100vw - 28px));
+  padding: 12px;
+  transform: translateX(-50%);
+  display: none;
+  pointer-events: none;
+}
+
+body.multiplayer-on .multiplayer-chat {
+  display: block;
+}
+
+.multiplayer-chat.open {
+  pointer-events: auto;
+  border-color: rgba(144, 243, 211, 0.42);
+}
+
+#chat-messages {
+  display: grid;
+  gap: 5px;
+  max-height: 132px;
+  overflow: hidden;
+  color: rgba(237, 248, 244, 0.88);
+  font-size: 0.84rem;
+}
+
+#chat-messages div {
+  padding: 3px 0;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+}
+
+#chat-messages strong {
+  color: var(--accent);
+}
+
+#chat-input {
+  display: none;
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(144, 243, 211, 0.26);
+  border-radius: 8px;
+  outline: none;
+  background: rgba(2, 8, 8, 0.92);
+  color: var(--text);
+  font: inherit;
+}
+
+.multiplayer-chat.open #chat-input {
+  display: block;
+}
+
+.player-name-tag {
+  position: fixed;
+  z-index: 6;
+  max-width: 160px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(3, 10, 10, 0.82);
+  border: 1px solid rgba(144, 243, 211, 0.32);
+  color: #e9fff8;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.88);
+}
+
+.player-name-tag.caught {
+  border-color: rgba(224, 97, 68, 0.55);
+  color: #ffb6a6;
 }
 
 @keyframes radarSweep {
@@ -617,6 +740,84 @@ body.radar-on .radar-map {
   box-shadow: 0 16px 26px rgba(120, 186, 164, 0.22);
 }
 
+.multiplayer-panel {
+  margin-top: 18px;
+  padding: 14px;
+  border-radius: 8px;
+  background: rgba(4, 13, 13, 0.68);
+  border: 1px solid rgba(144, 243, 211, 0.18);
+}
+
+.multiplayer-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.multiplayer-form label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.multiplayer-form input {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid rgba(144, 243, 211, 0.2);
+  border-radius: 8px;
+  outline: none;
+  background: rgba(2, 8, 8, 0.72);
+  color: var(--text);
+  font: inherit;
+}
+
+.multiplayer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.multiplayer-actions button {
+  margin-top: 0;
+  padding: 10px 14px;
+}
+
+#multiplayer-status {
+  min-height: 20px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.room-list {
+  display: grid;
+  gap: 8px;
+  max-height: 150px;
+  margin-top: 10px;
+  overflow: auto;
+}
+
+.room-list button {
+  width: 100%;
+  margin-top: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(10, 24, 23, 0.9);
+  border: 1px solid rgba(144, 243, 211, 0.16);
+  box-shadow: none;
+  color: var(--text);
+  text-align: left;
+}
+
+.room-list small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+}
+
 .option-control {
   display: grid;
   gap: 10px;
@@ -762,7 +963,8 @@ body.radar-on .radar-map {
   .left-panel,
   .right-panel,
   .inventory-panel,
-  .radar-map {
+  .radar-map,
+  .multiplayer-hud {
     width: 100%;
     grid-column: auto;
     justify-self: stretch;
@@ -778,6 +980,10 @@ body.radar-on .radar-map {
 
   .radar-map {
     grid-column: 1;
+  }
+
+  .multiplayer-hud {
+    grid-column: 2;
   }
 }
 
@@ -797,7 +1003,8 @@ body.radar-on .radar-map {
   .right-panel,
   .left-panel,
   .inventory-panel,
-  .radar-map {
+  .radar-map,
+  .multiplayer-hud {
     grid-column: 1;
   }
 
@@ -811,6 +1018,10 @@ body.radar-on .radar-map {
   }
 
   .options-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .multiplayer-form {
     grid-template-columns: 1fr;
   }
 

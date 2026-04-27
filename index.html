@@ -65,6 +65,9 @@
             <span>Radar Map</span>
             <strong id="radar-battery-text">0%</strong>
           </div>
+          <div class="radar-battery-bar" aria-hidden="true">
+            <span id="radar-battery-fill"></span>
+          </div>
           <div class="radar-scope" aria-hidden="true">
             <div class="radar-rings"></div>
             <div class="radar-sweep"></div>
@@ -78,6 +81,18 @@
           </div>
         </div>
 
+        <div class="panel multiplayer-hud" id="multiplayer-hud" aria-label="Multiplayer">
+          <p class="panel-label">Squad</p>
+          <div id="multiplayer-room-name">Solo run</div>
+          <div id="multiplayer-player-count">0 online</div>
+          <div id="revive-count">Revives 0</div>
+        </div>
+
+        <div class="panel multiplayer-chat" id="multiplayer-chat" aria-label="Multiplayer chat">
+          <div id="chat-messages"></div>
+          <input id="chat-input" type="text" maxlength="160" autocomplete="off" placeholder="Type message..." />
+        </div>
+
         <div class="center-prompt" id="center-prompt"></div>
         <div class="status-line" id="status-line">Reach the boat after you collect everything.</div>
 
@@ -87,6 +102,7 @@
           <span>Shift sprint</span>
           <span>C crouch</span>
           <span>E interact</span>
+          <span>T chat</span>
           <span>Q use item</span>
           <span>1-6 slots</span>
           <span>F flashlight</span>
@@ -122,6 +138,25 @@
             <button data-quality="normal">Normal Quality</button>
             <button data-quality="high">High Quality</button>
             <button data-quality="ultra">Ultra Quality</button>
+          </div>
+          <div class="multiplayer-panel" aria-label="Multiplayer mode">
+            <p class="panel-label">Multiplayer</p>
+            <div class="multiplayer-form">
+              <label>
+                <span>Username</span>
+                <input id="multiplayer-username" type="text" maxlength="24" value="Runner" />
+              </label>
+              <label>
+                <span>Room name</span>
+                <input id="multiplayer-room-input" type="text" maxlength="28" value="Island Run" />
+              </label>
+            </div>
+            <div class="multiplayer-actions">
+              <button id="create-room-button">Create Room</button>
+              <button id="refresh-rooms-button">Refresh Rooms</button>
+            </div>
+            <div id="multiplayer-status">Checking multiplayer server...</div>
+            <div id="room-list" class="room-list"></div>
           </div>
           <div class="options-panel" aria-label="Game options">
             <label class="option-control" for="music-volume">
@@ -196,6 +231,6 @@
       </div>
     </div>
 
-    <script type="module" src="./src/main.js?v=handheld-radar-6"></script>
+    <script type="module" src="./src/main.js?v=multiplayer-1"></script>
   </body>
 </html>
