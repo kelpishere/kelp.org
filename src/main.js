@@ -261,7 +261,7 @@ const dom = {
   alert: document.querySelector("#alert-pill"),
   flashlightPill: document.querySelector("#flashlight-pill"),
   radarPill: document.querySelector("#radar-pill"),
-  fullscreenButton: document.querySelector("#fullscreen-button"),
+  fullscreenButtons: [...document.querySelectorAll("[data-fullscreen-button]")],
   inventory: document.querySelector("#inventory-panel"),
   inventorySlots: [...document.querySelectorAll("[data-slot]")],
   radarMap: document.querySelector("#radar-map"),
@@ -2939,9 +2939,11 @@ function attachEvents() {
     resetGame();
   });
 
-  dom.fullscreenButton?.addEventListener("click", (event) => {
-    event.preventDefault();
-    toggleFullscreen();
+  dom.fullscreenButtons.forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      toggleFullscreen();
+    });
   });
 
   dom.createRoomButton?.addEventListener("click", (event) => {
@@ -3494,11 +3496,11 @@ async function toggleFullscreen() {
 function syncFullscreenButton() {
   const active = Boolean(getFullscreenElement());
   document.body.classList.toggle("fullscreen-active", active);
-  if (dom.fullscreenButton) {
-    dom.fullscreenButton.setAttribute("aria-pressed", String(active));
-    dom.fullscreenButton.title = active ? "Exit fullscreen" : "Toggle fullscreen";
-    dom.fullscreenButton.setAttribute("aria-label", active ? "Exit fullscreen" : "Toggle fullscreen");
-  }
+  dom.fullscreenButtons.forEach((button) => {
+    button.setAttribute("aria-pressed", String(active));
+    button.title = active ? "Exit fullscreen" : "Toggle fullscreen";
+    button.setAttribute("aria-label", active ? "Exit fullscreen" : "Toggle fullscreen");
+  });
 }
 
 function leaveMultiplayerRoom() {

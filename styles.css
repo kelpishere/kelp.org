@@ -765,6 +765,19 @@ body.multiplayer-on .multiplayer-chat {
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
 }
 
+.screen-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.screen-fullscreen-button {
+  width: 40px;
+  height: 40px;
+  box-shadow: none;
+}
+
 .screen-inner p {
   color: var(--muted);
   line-height: 1.5;

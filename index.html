@@ -21,7 +21,7 @@
           <div class="alert-pill" id="alert-pill">Quiet</div>
           <div class="flashlight-pill" id="flashlight-pill">Light On</div>
           <div class="radar-pill" id="radar-pill">Radar Off</div>
-          <button class="fullscreen-button" id="fullscreen-button" type="button" aria-label="Toggle fullscreen" aria-pressed="false" title="Toggle fullscreen">
+          <button class="fullscreen-button" id="fullscreen-button" data-fullscreen-button type="button" aria-label="Toggle fullscreen" aria-pressed="false" title="Toggle fullscreen">
             <span class="fullscreen-icon" aria-hidden="true">
               <i></i>
               <i></i>
@@ -134,7 +134,17 @@
 
       <div class="screen active" id="start-screen">
         <div class="screen-inner">
-          <p class="eyebrow">Stealth Horror</p>
+          <div class="screen-topline">
+            <p class="eyebrow">Stealth Horror</p>
+            <button class="fullscreen-button screen-fullscreen-button" id="fullscreen-menu-button" data-fullscreen-button type="button" aria-label="Toggle fullscreen" aria-pressed="false" title="Toggle fullscreen">
+              <span class="fullscreen-icon" aria-hidden="true">
+                <i></i>
+                <i></i>
+                <i></i>
+                <i></i>
+              </span>
+            </button>
+          </div>
           <h2>Slip off the island with the evidence.</h2>
           <p>
             The hunters can hear your footsteps, your sprinting, even the panic in your pace.
