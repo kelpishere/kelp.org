@@ -158,15 +158,16 @@ const REQUIRED_ITEM_IDS = [
   "radar",
 ];
 
-const INVENTORY_ITEM_IDS = ["key", "files", "safeCode", "magnifier", "radar"];
+const INVENTORY_ITEM_IDS = ["key", "files", "safeCode", "magnifier", "radar", "tracker"];
 const CODE_LOCKED_ITEM_IDS = new Set(["files", "chart"]);
 
 function createStartingInventorySlots(modeConfig = GAME_MODES.normal) {
-  const slots = Array(6).fill(null);
+  const slots = Array(7).fill(null);
   const radarMode = modeConfig.radarMode || "start";
   if (radarMode === "start") {
     slots[5] = "radar";
   }
+  slots[6] = "tracker";
   return slots;
 }
 
@@ -191,6 +192,7 @@ const ITEM_LABELS = {
   battery: "Radio battery",
   magnifier: "Magnifying glass",
   radar: "Radar goggles",
+  tracker: "Item tracker",
 };
 
 const HUNTER_SPECS = [
@@ -396,7 +398,7 @@ const state = {
     hideCheckDecided: false,
     hideCheckWillSearch: false,
     gogglesOn: false,
-    radarTarget: null,
+    trackerTarget: null,
     radarBattery: RADAR_BATTERY_START,
     radarSweep: 0,
   },
@@ -2287,7 +2289,7 @@ function buildRadarGoggles() {
 }
 
 function initHeldItemView() {
-  ["key", "files", "safeCode", "magnifier", "radar"].forEach((id) => {
+  ["key", "files", "safeCode", "magnifier", "radar", "tracker"].forEach((id) => {
     const model = createHeldItemModel(id);
     model.visible = false;
     heldItemModels.set(id, model);
@@ -2325,6 +2327,9 @@ function createHeldItemModel(id) {
 function createHeldItemObject(id) {
   if (id === "radar") {
     return buildHeldRadarScanner();
+  }
+  if (id === "tracker") {
+    return buildHeldItemTracker();
   }
 
   const builders = {
@@ -2375,6 +2380,46 @@ function buildHeldRadarScanner() {
   group.add(antenna);
   group.scale.setScalar(0.78);
   group.rotation.set(-0.26, 0.24, -0.12);
+  return group;
+}
+
+function buildHeldItemTracker() {
+  const group = new THREE.Group();
+  const shellMaterial = new THREE.MeshStandardMaterial({ color: 0x202521, roughness: 0.68, metalness: 0.08 });
+  const screenMaterial = new THREE.MeshBasicMaterial({ color: 0xb8ff68, transparent: true, opacity: 0.86 });
+  const detailMaterial = new THREE.MeshBasicMaterial({ color: 0x243211, transparent: true, opacity: 0.78 });
+  const accentMaterial = new THREE.MeshStandardMaterial({ color: 0xf0d66c, emissive: 0x5a3a05, emissiveIntensity: 0.55 });
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.38, 0.12), shellMaterial);
+  group.add(body);
+
+  const screen = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.22, 0.03), screenMaterial);
+  screen.position.set(-0.02, 0.04, -0.075);
+  group.add(screen);
+
+  const centerDot = new THREE.Mesh(new THREE.SphereGeometry(0.022, 8, 6), detailMaterial);
+  centerDot.position.set(-0.02, 0.04, -0.096);
+  group.add(centerDot);
+
+  const needle = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.016, 0.032), detailMaterial);
+  needle.position.set(0.04, 0.08, -0.098);
+  needle.rotation.z = -0.55;
+  group.add(needle);
+
+  for (const x of [-0.2, 0.18]) {
+    const button = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.022, 10), accentMaterial);
+    button.rotation.x = Math.PI / 2;
+    button.position.set(x, -0.15, -0.078);
+    group.add(button);
+  }
+
+  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.44, 8), shellMaterial);
+  antenna.position.set(0.24, 0.34, 0);
+  antenna.rotation.z = -0.45;
+  group.add(antenna);
+
+  group.scale.setScalar(0.78);
+  group.rotation.set(-0.18, 0.2, -0.18);
   return group;
 }
 
@@ -2846,6 +2891,7 @@ function attachEvents() {
       "Digit4",
       "Digit5",
       "Digit6",
+      "Digit7",
     ].includes(event.code);
 
     if (gameplayKey && playing) {
@@ -3006,7 +3052,15 @@ function attachEvents() {
     element.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      setMessage(`${getItemLabel(id)} is on the objective list. The radar map only scans nearby hunters now.`);
+      if (!state.started || state.gameOver || state.victory) {
+        setMessage(`${getItemLabel(id)} is on the objective list.`);
+        return;
+      }
+      if (!isItemTrackerInHand()) {
+        setMessage(`${getItemLabel(id)} is on the objective list. Select slot 7 item tracker to lock it.`);
+        return;
+      }
+      selectItemTrackerTarget(id);
     });
   });
 
@@ -3974,8 +4028,8 @@ function collectItem(item) {
   item.collected = true;
   item.mesh.visible = false;
   item.beacon.visible = false;
-  if (state.player.radarTarget === item) {
-    state.player.radarTarget = null;
+  if (state.player.trackerTarget === item) {
+    state.player.trackerTarget = null;
   }
 
   if (INVENTORY_ITEM_IDS.includes(item.id)) {
@@ -4107,7 +4161,7 @@ function selectInventorySlot(index) {
   if (!isRadarInHand() && state.player.gogglesOn) {
     state.player.gogglesOn = false;
     clearRadarMap();
-    clearRadarBeacons();
+    clearItemBeacons();
   }
   syncInventoryUI();
   const id = state.inventory.slots[index];
@@ -4132,6 +4186,10 @@ function getSelectedInventoryItem() {
 
 function isRadarInHand() {
   return getSelectedInventoryItem() === "radar";
+}
+
+function isItemTrackerInHand() {
+  return getSelectedInventoryItem() === "tracker";
 }
 
 function useInventoryItem(id) {
@@ -4161,6 +4219,15 @@ function useInventoryItem(id) {
 
   if (id === "radar") {
     toggleRadarGoggles();
+    return;
+  }
+
+  if (id === "tracker") {
+    if (selectItemTrackerLookTarget()) {
+      return;
+    }
+    const currentTarget = getItemTrackerPrompt();
+    setMessage(currentTarget || "Item tracker ready. Aim at an objective item or click its name on the list.");
   }
 }
 
@@ -4180,6 +4247,7 @@ function getShortItemLabel(id) {
     safeCode: "Code",
     magnifier: "Glass",
     radar: "Radar",
+    tracker: "Track",
   };
   return shortLabels[id] || getItemLabel(id);
 }
@@ -4309,9 +4377,8 @@ function toggleRadarGoggles() {
 
   state.player.gogglesOn = !state.player.gogglesOn;
   if (!state.player.gogglesOn) {
-    state.player.radarTarget = null;
     clearRadarMap();
-    clearRadarBeacons();
+    clearItemBeacons();
     setMessage("Radar map off.");
     return;
   }
@@ -4319,17 +4386,17 @@ function toggleRadarGoggles() {
   setMessage("Radar map online. It scans nearby hunters only, not the real world.");
 }
 
-function selectRadarLookTarget() {
-  const item = getRadarLookTarget();
+function selectItemTrackerLookTarget() {
+  const item = getItemTrackerLookTarget();
   if (!item) {
     return false;
   }
 
-  selectRadarTarget(item.id);
+  selectItemTrackerTarget(item.id);
   return true;
 }
 
-function getRadarLookTarget() {
+function getItemTrackerLookTarget() {
   raycaster.setFromCamera({ x: 0, y: 0 }, camera);
   raycaster.near = 0;
   raycaster.far = 72;
@@ -4337,12 +4404,18 @@ function getRadarLookTarget() {
   let bestDistance = Infinity;
 
   collectibles.forEach((item) => {
-    if (item.collected || state.items[item.id]) {
+    if (item.collected || state.items[item.id] || !isCollectibleEnabled(item.id)) {
       return;
     }
 
-    const hits = raycaster.intersectObjects([item.mesh, item.marker, item.beacon], true);
-    if (hits.length > 0 && hits[0].distance < bestDistance) {
+    const hits = raycaster.intersectObjects([item.mesh, item.marker], true);
+    if (hits.length === 0 || hits[0].distance >= bestDistance) {
+      return;
+    }
+
+    const blockers = raycaster.intersectObjects(lineOfSightMeshes, false);
+    const blocked = blockers.some((hit) => hit.distance < hits[0].distance - 0.16);
+    if (!blocked) {
       best = item;
       bestDistance = hits[0].distance;
     }
@@ -4351,36 +4424,67 @@ function getRadarLookTarget() {
   return best;
 }
 
-function selectRadarTarget(id) {
+function selectItemTrackerTarget(id) {
   if (!state.started || state.gameOver || state.victory) {
     return;
   }
 
-  if (getRadarMode() === "none") {
-    setMessage("Radar goggles are disabled for this custom run.");
+  if (!hasInventoryItem("tracker")) {
+    setMessage("You need the item tracker in your inventory first.");
     return;
   }
 
-  if (!hasInventoryItem("radar")) {
-    setMessage("You need the radar goggles in your inventory first.");
+  if (!isItemTrackerInHand()) {
+    setMessage("Select slot 7 item tracker first. Radar goggles only scan hunters.");
     return;
-  }
-
-  if (!state.player.gogglesOn) {
-    state.player.gogglesOn = true;
   }
 
   const item = collectibles.find((candidate) => candidate.id === id);
-  if (!item || item.collected || state.items[id]) {
+  if (!item || item.collected || state.items[id] || !isCollectibleEnabled(id)) {
     setMessage(`${getItemLabel(id)} is already handled.`);
     return;
   }
 
-  state.player.radarTarget = item;
-  setMessage(`Radar locked: ${item.name}. Distance only, no x-ray beacon.`);
+  state.player.trackerTarget = item;
+  setMessage(`Tracker locked: ${item.name}. Slot 7 shows distance only, no x-ray beacon.`);
 }
 
-function clearRadarBeacons() {
+function getItemTrackerPrompt() {
+  if (!state.started || state.gameOver || state.victory || !isItemTrackerInHand()) {
+    return "";
+  }
+
+  const item = state.player.trackerTarget;
+  if (!item) {
+    return "";
+  }
+
+  if (item.collected || state.items[item.id] || !isCollectibleEnabled(item.id)) {
+    state.player.trackerTarget = null;
+    return "";
+  }
+
+  const itemPosition = new THREE.Vector3();
+  item.mesh.getWorldPosition(itemPosition);
+  const distance = Math.round(horizontalDistance(state.player.position, itemPosition));
+  return `Tracker: ${item.name} ${distance}m ${getItemTrackerDirection(itemPosition)}.`;
+}
+
+function getItemTrackerDirection(itemPosition) {
+  const dx = itemPosition.x - state.player.position.x;
+  const dz = itemPosition.z - state.player.position.z;
+  if (Math.hypot(dx, dz) < 1) {
+    return "here";
+  }
+
+  const angleToItem = Math.atan2(dx, dz);
+  const relative = Math.atan2(Math.sin(angleToItem - state.yaw), Math.cos(angleToItem - state.yaw));
+  const labels = ["ahead", "ahead-right", "right", "behind-right", "behind", "behind-left", "left", "ahead-left"];
+  const index = Math.round((relative + Math.PI * 2) / (Math.PI / 4)) % labels.length;
+  return labels[index];
+}
+
+function clearItemBeacons() {
   collectibles.forEach((item) => {
     item.beacon.visible = false;
   });
@@ -4771,7 +4875,7 @@ function updateRadarGoggles(delta) {
     return;
   }
 
-  clearRadarBeacons();
+  clearItemBeacons();
 
   if (!state.player.gogglesOn || !isRadarInHand() || getRadarMode() === "none") {
     if (state.player.gogglesOn && !isRadarInHand()) {
@@ -5954,11 +6058,11 @@ function resetGame() {
   state.player.hideCheckDecided = false;
   state.player.hideCheckWillSearch = false;
   state.player.gogglesOn = false;
-  state.player.radarTarget = null;
+  state.player.trackerTarget = null;
   state.player.radarBattery = RADAR_BATTERY_START;
   state.player.radarSweep = 0;
   state.inventory.slots = createStartingInventorySlots(modeConfig);
-  state.inventory.selected = modeConfig.radarMode === "start" ? 5 : 0;
+  state.inventory.selected = modeConfig.radarMode === "start" ? 5 : 6;
   state.inventory.magnifierOn = false;
   state.inventory.heldBob = 0;
   state.items = createStartingItems(modeConfig);
@@ -6316,6 +6420,11 @@ function pointInPolygon(x, z, polygon) {
 function getIdlePrompt() {
   if (!state.started || state.gameOver || state.victory) {
     return "";
+  }
+
+  const trackerPrompt = getItemTrackerPrompt();
+  if (trackerPrompt) {
+    return trackerPrompt;
   }
 
   if (state.pointerLocked) {
