@@ -261,6 +261,7 @@ const dom = {
   alert: document.querySelector("#alert-pill"),
   flashlightPill: document.querySelector("#flashlight-pill"),
   radarPill: document.querySelector("#radar-pill"),
+  fullscreenButton: document.querySelector("#fullscreen-button"),
   inventory: document.querySelector("#inventory-panel"),
   inventorySlots: [...document.querySelectorAll("[data-slot]")],
   radarMap: document.querySelector("#radar-map"),
@@ -2753,6 +2754,9 @@ function attachEvents() {
     dom.prompt.textContent = state.prompt || getIdlePrompt();
   });
 
+  document.addEventListener("fullscreenchange", syncFullscreenButton);
+  document.addEventListener("webkitfullscreenchange", syncFullscreenButton);
+
   window.addEventListener("mousemove", (event) => {
     if (!state.pointerLocked || state.gameOver || state.victory) {
       return;
@@ -2933,6 +2937,11 @@ function attachEvents() {
 
   dom.restartButton.addEventListener("click", () => {
     resetGame();
+  });
+
+  dom.fullscreenButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    toggleFullscreen();
   });
 
   dom.createRoomButton?.addEventListener("click", (event) => {
@@ -3453,6 +3462,43 @@ function syncRemotePlayerLabels() {
       entity.label.style.top = `${(-projected.y * 0.5 + 0.5) * height}px`;
     }
   });
+}
+
+function getFullscreenElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+async function toggleFullscreen() {
+  const activeElement = getFullscreenElement();
+  try {
+    if (activeElement) {
+      const exitFullscreen = document.exitFullscreen || document.webkitExitFullscreen;
+      if (typeof exitFullscreen === "function") {
+        await exitFullscreen.call(document);
+      }
+    } else {
+      const requestFullscreen = document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen;
+      if (typeof requestFullscreen !== "function") {
+        setMessage("Fullscreen is not supported in this browser.");
+        return;
+      }
+      await requestFullscreen.call(document.documentElement);
+    }
+  } catch (error) {
+    setMessage("Fullscreen was blocked by the browser. Click the button again after focusing the game.");
+  }
+
+  syncFullscreenButton();
+}
+
+function syncFullscreenButton() {
+  const active = Boolean(getFullscreenElement());
+  document.body.classList.toggle("fullscreen-active", active);
+  if (dom.fullscreenButton) {
+    dom.fullscreenButton.setAttribute("aria-pressed", String(active));
+    dom.fullscreenButton.title = active ? "Exit fullscreen" : "Toggle fullscreen";
+    dom.fullscreenButton.setAttribute("aria-label", active ? "Exit fullscreen" : "Toggle fullscreen");
+  }
 }
 
 function leaveMultiplayerRoom() {
@@ -5693,6 +5739,7 @@ function syncMouseUi() {
   document.body.classList.toggle("look-active", !state.pointerLocked && state.input.dragging);
   document.body.classList.toggle("flashlight-off", !state.player.flashlightOn);
   document.body.classList.toggle("radar-on", state.player.gogglesOn && isRadarInHand());
+  syncFullscreenButton();
 }
 
 function moveWithCollisions(origin, radius, moveX, moveZ, floorOverride = null, ignoreCollisions = false) {

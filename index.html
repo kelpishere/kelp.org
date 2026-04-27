@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Black Tide</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=fullscreen-1" />
   </head>
   <body>
     <div id="app">
@@ -21,6 +21,14 @@
           <div class="alert-pill" id="alert-pill">Quiet</div>
           <div class="flashlight-pill" id="flashlight-pill">Light On</div>
           <div class="radar-pill" id="radar-pill">Radar Off</div>
+          <button class="fullscreen-button" id="fullscreen-button" type="button" aria-label="Toggle fullscreen" aria-pressed="false" title="Toggle fullscreen">
+            <span class="fullscreen-icon" aria-hidden="true">
+              <i></i>
+              <i></i>
+              <i></i>
+              <i></i>
+            </span>
+          </button>
         </div>
 
         <div class="panel left-panel">
@@ -231,6 +239,6 @@
       </div>
     </div>
 
-    <script type="module" src="./src/main.js?v=multiplayer-1"></script>
+    <script type="module" src="./src/main.js?v=fullscreen-1"></script>
   </body>
 </html>
