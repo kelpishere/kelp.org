@@ -471,12 +471,11 @@ body.multiplayer-on .multiplayer-hud {
 
 .multiplayer-chat {
   position: fixed;
-  left: 50%;
-  bottom: 92px;
+  left: clamp(12px, 2vw, 28px);
+  bottom: 128px;
   z-index: 12;
-  width: min(520px, calc(100vw - 28px));
+  width: min(360px, calc(100vw - 28px));
   padding: 12px;
-  transform: translateX(-50%);
   display: none;
   pointer-events: none;
 }
@@ -1018,6 +1017,17 @@ body.multiplayer-on .multiplayer-chat {
 
 #custom-button {
   background: linear-gradient(135deg, #b9d7ff, #91f0ca);
+}
+
+.spectate-button {
+  color: #03100f;
+  background: linear-gradient(135deg, #b9d7ff, #91f0ca);
+}
+
+#restart-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  filter: grayscale(0.35);
 }
 
 @media (max-width: 900px) {

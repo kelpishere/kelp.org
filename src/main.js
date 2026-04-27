@@ -298,6 +298,7 @@ const dom = {
   customSightValue: document.querySelector("#custom-sight-value"),
   customSpeed: document.querySelector("#custom-speed"),
   customSpeedValue: document.querySelector("#custom-speed-value"),
+  spectateButton: document.querySelector("#spectate-button"),
   restartButton: document.querySelector("#restart-button"),
   musicVolume: document.querySelector("#music-volume"),
   musicValue: document.querySelector("#music-value"),
@@ -358,6 +359,7 @@ const state = {
     connecting: false,
     roomId: "",
     roomName: "",
+    hostId: "",
     playerId: "",
     username: "Runner",
     room: null,
@@ -368,6 +370,8 @@ const state = {
     lastChatSignature: "",
     reviveCharges: 0,
     caught: false,
+    caughtPlayers: new Set(),
+    spectatingId: "",
   },
   input: {
     dragging: false,
@@ -423,6 +427,7 @@ function createHunterState() {
     stuckTimer: 0,
     wallBreakTimer: 0,
     wallBreakCooldown: 0,
+    targetPlayerId: "local",
   };
 }
 
@@ -2936,7 +2941,15 @@ function attachEvents() {
   });
 
   dom.restartButton.addEventListener("click", () => {
+    if (state.multiplayer.enabled && state.multiplayer.caught && state.gameOver) {
+      setMessage("You need a teammate with revive drugs to bring you back.");
+      return;
+    }
     resetGame();
+  });
+
+  dom.spectateButton?.addEventListener("click", () => {
+    spectateNextTeammate();
   });
 
   dom.fullscreenButtons.forEach((button) => {
@@ -3140,12 +3153,15 @@ function beginMultiplayerRun(room, playerId, username) {
   state.multiplayer.enabled = true;
   state.multiplayer.roomId = room?.id || "";
   state.multiplayer.roomName = room?.name || "Island Run";
+  state.multiplayer.hostId = room?.hostId || "";
   state.multiplayer.playerId = playerId || "";
   state.multiplayer.username = username || "Runner";
   state.multiplayer.room = room || null;
   state.multiplayer.syncClock = MULTIPLAYER_SYNC_INTERVAL;
   state.multiplayer.reviveCharges = 0;
   state.multiplayer.caught = false;
+  state.multiplayer.caughtPlayers.clear();
+  state.multiplayer.spectatingId = "";
   state.gameMode = "normal";
   applyMultiplayerRoom(room);
   dom.startScreen.classList.remove("active");
@@ -3175,6 +3191,7 @@ function syncMultiplayerUi() {
   if (dom.chat) {
     dom.chat.classList.toggle("open", state.multiplayer.chatOpen);
   }
+  updateSpectateButton();
 }
 
 function handleMultiplayerChatKey(event) {
@@ -3309,20 +3326,33 @@ function updateMultiplayer(delta) {
 
 async function postMultiplayerState() {
   state.multiplayer.syncing = true;
+  const payload = {
+    roomId: state.multiplayer.roomId,
+    playerId: state.multiplayer.playerId,
+    username: state.multiplayer.username,
+    x: state.player.position.x,
+    y: state.player.position.y,
+    z: state.player.position.z,
+    yaw: state.yaw,
+    pitch: state.pitch,
+    floorHeight: state.player.floorHeight,
+    sound: state.player.sound,
+    flashlightOn: state.player.flashlightOn,
+    hiding: state.player.hiding,
+    caught: state.multiplayer.caught,
+    victory: state.victory,
+  };
+
+  if (isMultiplayerHost()) {
+    payload.hunters = getHunterSnapshots();
+    payload.caughtPlayers = [...state.multiplayer.caughtPlayers];
+    state.multiplayer.caughtPlayers.clear();
+  }
+
   try {
     const data = await multiplayerFetch("/api/state", {
       method: "POST",
-      body: JSON.stringify({
-        roomId: state.multiplayer.roomId,
-        playerId: state.multiplayer.playerId,
-        username: state.multiplayer.username,
-        x: state.player.position.x,
-        y: state.player.position.y,
-        z: state.player.position.z,
-        yaw: state.yaw,
-        caught: state.multiplayer.caught,
-        victory: state.victory,
-      }),
+      body: JSON.stringify(payload),
     });
     applyMultiplayerRoom(data.room);
   } catch (error) {
@@ -3339,14 +3369,21 @@ function applyMultiplayerRoom(room) {
 
   state.multiplayer.room = room;
   state.multiplayer.roomName = room.name || state.multiplayer.roomName || "Island Run";
+  state.multiplayer.hostId = room.hostId || state.multiplayer.hostId || "";
   renderChatMessages(room.chat || []);
 
   const localPlayer = room.players?.find((player) => player.id === state.multiplayer.playerId);
+  if (localPlayer && !state.multiplayer.caught && localPlayer.caught && !state.victory) {
+    triggerMultiplayerCaughtByServer();
+  }
   if (localPlayer && state.multiplayer.caught && !localPlayer.caught && state.gameOver) {
     reviveLocalPlayer();
   }
 
   syncRemotePlayers(room.players || []);
+  if (!isMultiplayerHost()) {
+    applyHunterSnapshots(room.hunters || []);
+  }
   syncMultiplayerUi();
 }
 
@@ -3367,7 +3404,14 @@ function syncRemotePlayers(players) {
     entity.caught = Boolean(player.caught);
     entity.target.set(Number(player.x) || 0, (Number(player.y) || PLAYER_HEIGHT) - PLAYER_HEIGHT, Number(player.z) || 0);
     entity.yaw = Number(player.yaw) || 0;
+    entity.pitch = Number(player.pitch) || 0;
+    entity.floorHeight = Number(player.floorHeight) || 0;
+    entity.sound = THREE.MathUtils.clamp(Number(player.sound) || 0, 0, 1);
+    entity.flashlightOn = player.flashlightOn !== false;
+    entity.hiding = Boolean(player.hiding);
     entity.group.visible = true;
+    entity.flashlight.visible = entity.flashlightOn && !entity.caught;
+    entity.flashlight.rotation.x = entity.pitch;
     entity.label.textContent = entity.caught ? `${entity.username} needs revive` : entity.username;
     entity.label.classList.toggle("caught", entity.caught);
     entity.group.traverse((child) => {
@@ -3383,6 +3427,7 @@ function syncRemotePlayers(players) {
       removeRemotePlayerEntity(id, entity);
     }
   }
+  updateSpectateButton();
 }
 
 function createRemotePlayerEntity(player) {
@@ -3402,6 +3447,29 @@ function createRemotePlayerEntity(player) {
   backpack.position.set(0, 0.95, 0.37);
   group.add(backpack);
 
+  const flashlightGroup = new THREE.Group();
+  flashlightGroup.position.set(0.18, 1.35, -0.22);
+  const cone = new THREE.Mesh(
+    new THREE.ConeGeometry(0.82, 5.8, LOW_SPEC_MODE ? 10 : 18, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0xcafcff,
+      transparent: true,
+      opacity: LOW_SPEC_MODE ? 0.12 : 0.18,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  cone.position.z = -2.9;
+  cone.rotation.x = -Math.PI / 2;
+  flashlightGroup.add(cone);
+  if (!LOW_SPEC_MODE) {
+    const glow = new THREE.PointLight(0xbffaff, 0.55, 7);
+    glow.position.set(0, 0, -2.2);
+    flashlightGroup.add(glow);
+  }
+  flashlightGroup.visible = player.flashlightOn !== false && !player.caught;
+  group.add(flashlightGroup);
+
   group.position.set(Number(player.x) || 0, (Number(player.y) || PLAYER_HEIGHT) - PLAYER_HEIGHT, Number(player.z) || 0);
   group.rotation.y = Number(player.yaw) || 0;
   scene.add(group);
@@ -3417,6 +3485,12 @@ function createRemotePlayerEntity(player) {
     target: group.position.clone(),
     username: player.username || "Runner",
     yaw: Number(player.yaw) || 0,
+    pitch: Number(player.pitch) || 0,
+    floorHeight: Number(player.floorHeight) || 0,
+    sound: Number(player.sound) || 0,
+    flashlightOn: player.flashlightOn !== false,
+    hiding: Boolean(player.hiding),
+    flashlight: flashlightGroup,
     caught: Boolean(player.caught),
   };
 }
@@ -3466,6 +3540,137 @@ function syncRemotePlayerLabels() {
   });
 }
 
+function isMultiplayerHost() {
+  return Boolean(state.multiplayer.enabled && state.multiplayer.playerId && state.multiplayer.hostId === state.multiplayer.playerId);
+}
+
+function getHunterSnapshots() {
+  return getActiveHunters().map((hunter) => ({
+    id: hunter.spec.id,
+    x: hunter.actor.position.x,
+    y: hunter.actor.position.y,
+    z: hunter.actor.position.z,
+    yaw: hunter.actor.rotation.y,
+    floorHeight: hunter.state.floorHeight,
+    targetFloor: hunter.state.targetFloor,
+    mode: hunter.state.mode,
+    awareness: hunter.state.awareness,
+  }));
+}
+
+function applyHunterSnapshots(snapshots) {
+  if (!Array.isArray(snapshots) || snapshots.length === 0) {
+    return;
+  }
+
+  snapshots.forEach((snapshot) => {
+    const hunter = hunters.find((candidate) => candidate.spec.id === snapshot.id);
+    if (!hunter || !hunter.actor.visible) {
+      return;
+    }
+
+    const target = new THREE.Vector3(Number(snapshot.x) || 0, Number(snapshot.y) || 0, Number(snapshot.z) || 0);
+    hunter.actor.position.lerp(target, 0.38);
+    hunter.actor.rotation.y = lerpAngle(hunter.actor.rotation.y, Number(snapshot.yaw) || 0, 0.38);
+    hunter.state.mode = snapshot.mode || hunter.state.mode;
+    const floorHeight = Number(snapshot.floorHeight);
+    const targetFloor = Number(snapshot.targetFloor);
+    hunter.state.floorHeight = Number.isFinite(floorHeight) ? floorHeight : 0;
+    hunter.state.targetFloor = Number.isFinite(targetFloor) ? targetFloor : hunter.state.targetFloor;
+    hunter.state.awareness = THREE.MathUtils.clamp(Number(snapshot.awareness) || 0, 0, 1);
+    hunter.actor.position.y = hunter.state.floorHeight;
+  });
+}
+
+function markRemotePlayerCaught(playerId, username = "teammate") {
+  if (!state.multiplayer.enabled || !isMultiplayerHost() || !playerId) {
+    return;
+  }
+
+  state.multiplayer.caughtPlayers.add(playerId);
+  const player = state.multiplayer.room?.players?.find((candidate) => candidate.id === playerId);
+  if (player) {
+    player.caught = true;
+  }
+  const entity = remotePlayers.get(playerId);
+  if (entity) {
+    entity.caught = true;
+    entity.label.textContent = `${entity.username} needs revive`;
+    entity.label.classList.add("caught");
+  }
+  setMessage(`${username} was caught. Revive drugs can bring them back.`);
+}
+
+function triggerMultiplayerCaughtByServer() {
+  state.gameOver = true;
+  state.multiplayer.caught = true;
+  stopTimer();
+  document.exitPointerLock();
+  stopLookDrag();
+  configureMultiplayerCaughtScreen();
+  syncMouseUi();
+  syncMultiplayerUi();
+}
+
+function configureMultiplayerCaughtScreen() {
+  dom.endKicker.textContent = "Caught";
+  dom.endTitle.textContent = "Wait for a revive.";
+  dom.endCopy.textContent = `Run paused at ${formatRunTime(state.timer.elapsed)}. A teammate needs revive drugs to pick you up.`;
+  dom.endScreen.classList.add("active");
+  if (dom.restartButton) {
+    dom.restartButton.disabled = true;
+    dom.restartButton.textContent = "Waiting For Revive";
+  }
+  updateSpectateButton();
+}
+
+function updateSpectateButton() {
+  if (!dom.spectateButton) {
+    return;
+  }
+
+  const hasTeammate = [...remotePlayers.values()].some((entity) => !entity.caught);
+  dom.spectateButton.hidden = !(state.multiplayer.enabled && state.multiplayer.caught && hasTeammate);
+}
+
+function spectateNextTeammate() {
+  if (!state.multiplayer.enabled || !state.multiplayer.caught) {
+    return;
+  }
+
+  const ids = [...remotePlayers.entries()].filter(([, entity]) => !entity.caught).map(([id]) => id);
+  if (!ids.length) {
+    setMessage("No teammate is alive to watch yet.");
+    updateSpectateButton();
+    return;
+  }
+
+  const currentIndex = ids.indexOf(state.multiplayer.spectatingId);
+  state.multiplayer.spectatingId = ids[(currentIndex + 1) % ids.length];
+  const entity = remotePlayers.get(state.multiplayer.spectatingId);
+  setMessage(`Watching ${entity?.username || "teammate"}.`);
+  updateSpectatorCamera(1);
+}
+
+function updateSpectatorCamera(delta) {
+  if (!state.multiplayer.enabled || !state.multiplayer.caught || !state.multiplayer.spectatingId) {
+    return;
+  }
+
+  const entity = remotePlayers.get(state.multiplayer.spectatingId);
+  if (!entity || entity.caught) {
+    state.multiplayer.spectatingId = "";
+    updateSpectateButton();
+    return;
+  }
+
+  const eye = entity.group.position.clone();
+  eye.y += PLAYER_HEIGHT;
+  camera.position.lerp(eye, Math.min(1, 1 - Math.exp(-delta * 10)));
+  camera.rotation.x = THREE.MathUtils.lerp(camera.rotation.x, entity.pitch || 0, 1 - Math.exp(-delta * 10));
+  camera.rotation.y = lerpAngle(camera.rotation.y, entity.group.rotation.y, 1 - Math.exp(-delta * 10));
+}
+
 function getFullscreenElement() {
   return document.fullscreenElement || document.webkitFullscreenElement || null;
 }
@@ -3510,11 +3715,14 @@ function leaveMultiplayerRoom() {
 
   state.multiplayer.enabled = false;
   state.multiplayer.roomId = "";
+  state.multiplayer.hostId = "";
   state.multiplayer.playerId = "";
   state.multiplayer.room = null;
   state.multiplayer.caught = false;
+  state.multiplayer.caughtPlayers.clear();
   state.multiplayer.reviveCharges = 0;
   state.multiplayer.chatOpen = false;
+  state.multiplayer.spectatingId = "";
   for (const [id, entity] of remotePlayers) {
     removeRemotePlayerEntity(id, entity);
   }
@@ -3805,7 +4013,15 @@ async function reviveAlly(player) {
 function reviveLocalPlayer() {
   state.gameOver = false;
   state.multiplayer.caught = false;
+  state.multiplayer.spectatingId = "";
   dom.endScreen.classList.remove("active");
+  if (dom.restartButton) {
+    dom.restartButton.disabled = false;
+    dom.restartButton.textContent = "Try Again";
+  }
+  if (dom.spectateButton) {
+    dom.spectateButton.hidden = true;
+  }
   state.player.position.copy(findSafePosition(state.player.position, PLAYER_RADIUS));
   state.player.sound = 0.08;
   state.player.hiding = false;
@@ -4224,6 +4440,9 @@ function animate(now = 0) {
   const delta = Math.min(CLOCK.getDelta(), 0.05);
   updateTimer();
   updateMultiplayer(delta);
+  if (state.gameOver && state.multiplayer.caught) {
+    updateSpectatorCamera(delta);
+  }
 
   if (state.started && !state.gameOver && !state.victory) {
     updateKeyboardLook(delta);
@@ -4579,12 +4798,37 @@ function clearRadarMap() {
   }
 }
 
+function checkSyncedHunterCapture() {
+  if (!state.multiplayer.enabled || state.multiplayer.caught || state.player.hiding) {
+    return;
+  }
+
+  const caught = getActiveHunters().some((hunter) => {
+    const sameFloor = Math.abs(hunter.state.floorHeight - state.player.floorHeight) < 0.45;
+    return sameFloor && horizontalDistance(hunter.actor.position, state.player.position) < 1.9;
+  });
+
+  if (caught) {
+    triggerLoss();
+  }
+}
+
 function updateEnemy(delta) {
   const activeHunters = getActiveHunters();
   if (activeHunters.length === 0) {
     activeHunter = null;
     enemyActor = null;
     enemyDebugHelper = null;
+    return;
+  }
+
+  if (state.multiplayer.enabled && !isMultiplayerHost()) {
+    activeHunter = activeHunters[0] || null;
+    enemyActor = activeHunter?.actor || null;
+    enemyDebugHelper = activeHunter?.debugHelper || null;
+    state.enemy = activeHunter?.state || state.enemy;
+    checkSyncedHunterCapture();
+    activeHunters.forEach((hunter) => hunter.debugHelper?.update());
     return;
   }
 
@@ -4602,6 +4846,81 @@ function updateEnemy(delta) {
   state.enemy = activeHunter?.state || state.enemy;
 }
 
+function getHunterPreyCandidates() {
+  const candidates = [
+    {
+      id: "local",
+      name: "you",
+      position: state.player.position,
+      floorHeight: state.player.floorHeight,
+      sound: state.player.sound,
+      flashlightOn: state.player.flashlightOn,
+      hiding: state.player.hiding,
+      caught: state.multiplayer.caught,
+      isLocal: true,
+    },
+  ];
+
+  if (!state.multiplayer.enabled || !isMultiplayerHost()) {
+    return candidates;
+  }
+
+  (state.multiplayer.room?.players || []).forEach((player) => {
+    if (!player || player.id === state.multiplayer.playerId || player.caught || player.victory) {
+      return;
+    }
+
+    candidates.push({
+      id: player.id,
+      name: player.username || "teammate",
+      position: new THREE.Vector3(Number(player.x) || 0, Number(player.y) || PLAYER_HEIGHT, Number(player.z) || 0),
+      floorHeight: Number(player.floorHeight) || 0,
+      sound: THREE.MathUtils.clamp(Number(player.sound) || 0, 0, 1),
+      flashlightOn: player.flashlightOn !== false,
+      hiding: Boolean(player.hiding),
+      caught: false,
+      isLocal: false,
+    });
+  });
+
+  return candidates;
+}
+
+function chooseHunterPrey(enemyPosition, hunterHearing, hunterSight) {
+  let best = null;
+  let bestScore = -Infinity;
+  const candidates = getHunterPreyCandidates().filter((candidate) => !candidate.caught);
+
+  candidates.forEach((candidate) => {
+    const distance = horizontalDistance(enemyPosition, candidate.position);
+    const sameFloor = Math.abs(state.enemy.floorHeight - candidate.floorHeight) < 0.45;
+    const noiseReach = (13 + candidate.sound * 50) * hunterHearing;
+    const heard = !candidate.hiding && sameFloor && candidate.sound > 0.08 && distance < noiseReach;
+    const directRange = (candidate.flashlightOn ? 40 : 26) * hunterSight;
+    const peripheralRange = (candidate.flashlightOn ? 24 : 15) * hunterSight;
+    const directSight =
+      sameFloor &&
+      distance < directRange &&
+      withinView(enemyPosition, candidate.position, enemyActor.rotation.y, Math.PI * 0.38);
+    const peripheralSight =
+      sameFloor &&
+      distance < peripheralRange &&
+      withinView(enemyPosition, candidate.position, enemyActor.rotation.y, Math.PI * 0.58);
+    const seen = !candidate.hiding && (directSight || peripheralSight) && hasLineOfSight(enemyPosition, candidate.position);
+    let score = sameFloor ? 0 : -2;
+    if (seen) score += 5 + (candidate.flashlightOn ? 1.2 : 0.4) - distance / 80;
+    if (heard) score += 2.4 + candidate.sound * 2 - distance / 85;
+    if (distance < 4 && sameFloor && !candidate.hiding) score += 4;
+    if (state.enemy.targetPlayerId === candidate.id) score += state.enemy.mode === "chase" ? 3.5 : 0.8;
+    if (!best || score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  });
+
+  return best || candidates[0] || getHunterPreyCandidates()[0];
+}
+
 function updateSingleEnemy(delta) {
   const modeConfig = getModeConfig();
   const hunterSpec = getActiveHunterSpec();
@@ -4613,20 +4932,21 @@ function updateSingleEnemy(delta) {
   const hunterSpeed = hunterSpec.speedScale * (modeConfig.speedMultiplier ?? 1);
   const hunterRadius = hunterSpec.radius;
   const enemyPosition = enemyActor.position;
-  const playerPosition = state.player.position;
+  const prey = chooseHunterPrey(enemyPosition, hunterHearing, hunterSight);
+  const playerPosition = prey.position;
   const distanceToPlayer = horizontalDistance(enemyPosition, playerPosition);
-  const sameFloorAsPlayer = Math.abs(state.enemy.floorHeight - state.player.floorHeight) < 0.45;
-  const noiseIntensity = THREE.MathUtils.clamp(state.player.sound, 0, 1);
+  const sameFloorAsPlayer = Math.abs(state.enemy.floorHeight - prey.floorHeight) < 0.45;
+  const noiseIntensity = THREE.MathUtils.clamp(prey.sound, 0, 1);
   const noiseBoost = smoothstep(0.34, 1, noiseIntensity);
   const playerNoiseReach = (13 + noiseIntensity * 50) * hunterHearing;
   const heardPlayer =
-    !state.player.hiding &&
-    state.player.sound > 0.08 &&
+    !prey.hiding &&
+    prey.sound > 0.08 &&
     distanceToPlayer < playerNoiseReach &&
     sameFloorAsPlayer;
-  const flashlightExposure = state.player.flashlightOn ? 1.34 : 0.72;
-  const directVisionRange = (state.player.flashlightOn ? 40 : 26) * hunterSight;
-  const peripheralVisionRange = (state.player.flashlightOn ? 24 : 15) * hunterSight;
+  const flashlightExposure = prey.flashlightOn ? 1.34 : 0.72;
+  const directVisionRange = (prey.flashlightOn ? 40 : 26) * hunterSight;
+  const peripheralVisionRange = (prey.flashlightOn ? 24 : 15) * hunterSight;
   const directSightCone =
     sameFloorAsPlayer &&
     distanceToPlayer < directVisionRange &&
@@ -4636,7 +4956,7 @@ function updateSingleEnemy(delta) {
     distanceToPlayer < peripheralVisionRange &&
     withinView(enemyPosition, playerPosition, enemyActor.rotation.y, Math.PI * 0.58);
   const canSeePlayer =
-    !state.player.hiding && (directSightCone || peripheralSightCone) && hasLineOfSight(enemyPosition, playerPosition);
+    !prey.hiding && (directSightCone || peripheralSightCone) && hasLineOfSight(enemyPosition, playerPosition);
   const sightPressure = canSeePlayer
     ? THREE.MathUtils.clamp(
         ((directSightCone ? 0.86 : 0.52) * flashlightExposure) - distanceToPlayer / 58,
@@ -4645,12 +4965,12 @@ function updateSingleEnemy(delta) {
       )
     : 0;
   const overwhelmingNoise =
-    !state.player.hiding &&
+    !prey.hiding &&
     sameFloorAsPlayer &&
-    ((state.player.sound > 0.48 && distanceToPlayer < 34 * hunterHearing) ||
-      (state.player.sound > 0.82 && distanceToPlayer < 54 * hunterHearing));
+    ((prey.sound > 0.48 && distanceToPlayer < 34 * hunterHearing) ||
+      (prey.sound > 0.82 && distanceToPlayer < 54 * hunterHearing));
   const hearingPressure = heardPlayer
-    ? THREE.MathUtils.clamp(state.player.sound * 1.15 - distanceToPlayer / 44, 0.02, 0.72)
+    ? THREE.MathUtils.clamp(prey.sound * 1.15 - distanceToPlayer / 44, 0.02, 0.72)
     : 0;
 
   state.enemy.stairCooldown = Math.max(0, state.enemy.stairCooldown - delta);
@@ -4679,19 +4999,22 @@ function updateSingleEnemy(delta) {
     state.enemy.nearWarned = false;
   }
 
+  const preyName = prey.isLocal ? "you" : prey.name;
+  const preyPossessive = prey.isLocal ? "your" : `${prey.name}'s`;
   const startleReason = canSeePlayer
-    ? state.player.flashlightOn
-      ? "saw your flashlight"
-      : "saw you moving in the dark"
+    ? prey.flashlightOn
+      ? `saw ${preyPossessive} flashlight`
+      : `saw ${preyName} moving in the dark`
     : overwhelmingNoise || heardPlayer
-      ? "heard you"
-      : "tracked your movement";
+      ? `heard ${preyName}`
+      : `tracked ${preyName}`;
 
   if (canSeePlayer || overwhelmingNoise) {
     state.enemy.mode = "chase";
+    state.enemy.targetPlayerId = prey.id;
     state.enemy.loseSightTimer = 4.2;
     state.enemy.heardAt.copy(playerPosition);
-    state.enemy.targetFloor = state.player.floorHeight;
+    state.enemy.targetFloor = prey.floorHeight;
     if (!state.enemy.spottedOnce) {
       setMessage(`${hunterSpec.name} ${startleReason}. Move.`);
       if (hunterSpec.eagleSound) {
@@ -4702,18 +5025,20 @@ function updateSingleEnemy(delta) {
   } else if (heardPlayer) {
     if (state.enemy.mode !== "chase") {
       state.enemy.mode = "investigate";
-      setMessage(`${hunterSpec.name} heard you.`);
+      setMessage(`${hunterSpec.name} heard ${preyName}.`);
     }
+    state.enemy.targetPlayerId = prey.id;
     state.enemy.searchTimer = 7;
     state.enemy.heardAt.copy(playerPosition);
-    state.enemy.targetFloor = state.player.floorHeight;
+    state.enemy.targetFloor = prey.floorHeight;
   }
 
-  if (!state.player.hiding && sameFloorAsPlayer && state.enemy.awareness > 0.82 && distanceToPlayer < 22 * hunterNearRange) {
+  if (!prey.hiding && sameFloorAsPlayer && state.enemy.awareness > 0.82 && distanceToPlayer < 22 * hunterNearRange) {
     state.enemy.mode = "chase";
+    state.enemy.targetPlayerId = prey.id;
     state.enemy.loseSightTimer = 4;
     state.enemy.heardAt.copy(playerPosition);
-    state.enemy.targetFloor = state.player.floorHeight;
+    state.enemy.targetFloor = prey.floorHeight;
     if (!state.enemy.spottedOnce) {
       setMessage(`${hunterSpec.name} ${startleReason}. Move.`);
       if (hunterSpec.eagleSound) {
@@ -4723,9 +5048,10 @@ function updateSingleEnemy(delta) {
     }
   } else if (state.enemy.awareness > 0.22 && state.enemy.mode === "patrol") {
     state.enemy.mode = "investigate";
+    state.enemy.targetPlayerId = prey.id;
     state.enemy.searchTimer = 6.2;
     state.enemy.heardAt.copy(playerPosition);
-    state.enemy.targetFloor = state.player.floorHeight;
+    state.enemy.targetFloor = prey.floorHeight;
   }
 
   let target = state.enemy.wanderTarget;
@@ -4746,7 +5072,8 @@ function updateSingleEnemy(delta) {
     }
   } else if (state.enemy.mode === "chase") {
     target = playerPosition;
-    state.enemy.targetFloor = state.player.floorHeight;
+    state.enemy.targetPlayerId = prey.id;
+    state.enemy.targetFloor = prey.floorHeight;
     if (canSeePlayer) {
       state.enemy.loseSightTimer = 4.2;
     } else {
@@ -4811,8 +5138,12 @@ function updateSingleEnemy(delta) {
     enemyActor.rotation.y = lerpAngle(enemyActor.rotation.y, targetYaw, 0.12);
   }
 
-  if (!state.player.hiding && sameFloorAsPlayer && distanceToPlayer < 1.9) {
-    triggerLoss();
+  if (!prey.hiding && sameFloorAsPlayer && distanceToPlayer < 1.9) {
+    if (prey.isLocal) {
+      triggerLoss();
+    } else {
+      markRemotePlayerCaught(prey.id, prey.name);
+    }
   }
 
   if (enemyDebugHelper) {
@@ -5516,10 +5847,7 @@ function triggerLoss() {
   if (state.multiplayer.enabled) {
     state.multiplayer.caught = true;
     postMultiplayerState();
-    dom.endKicker.textContent = "Caught";
-    dom.endTitle.textContent = "Wait for a revive.";
-    dom.endCopy.textContent = `Run paused at ${formatRunTime(state.timer.elapsed)}. A teammate needs revive drugs to pick you up.`;
-    dom.endScreen.classList.add("active");
+    configureMultiplayerCaughtScreen();
     setMessage("You were caught. A teammate can revive you with revive drugs.");
     syncMultiplayerUi();
     return;
@@ -5556,6 +5884,14 @@ function resetGame() {
   state.pointerLocked = false;
   state.gameOver = false;
   state.victory = false;
+  if (dom.restartButton) {
+    dom.restartButton.disabled = false;
+    dom.restartButton.textContent = "Try Again";
+  }
+  if (dom.spectateButton) {
+    dom.spectateButton.hidden = true;
+  }
+  state.multiplayer.spectatingId = "";
   state.yaw = 0;
   state.pitch = 0;
   state.player.position.copy(findSafePosition(PLAYER_START, PLAYER_RADIUS));

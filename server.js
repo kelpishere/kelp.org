@@ -65,10 +65,50 @@ function cleanup() {
         room.players.delete(playerId);
       }
     }
+    ensureRoomHost(room);
     if (room.players.size === 0 && now - room.lastActive > 120000) {
       rooms.delete(roomId);
     }
   }
+}
+
+function ensureRoomHost(room) {
+  if (!room.players.size) {
+    room.hostId = "";
+    return "";
+  }
+
+  const currentHost = room.players.get(room.hostId);
+  if (currentHost && !currentHost.caught) {
+    return room.hostId;
+  }
+
+  const nextHost = [...room.players.values()].find((player) => !player.caught) || [...room.players.values()][0];
+  room.hostId = nextHost.id;
+  return room.hostId;
+}
+
+function numberOr(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function cleanHunters(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.slice(0, 8).map((hunter) => ({
+    id: cleanText(hunter.id, "hunter", 20),
+    x: numberOr(hunter.x, 0),
+    y: numberOr(hunter.y, 0),
+    z: numberOr(hunter.z, 0),
+    yaw: numberOr(hunter.yaw, 0),
+    floorHeight: numberOr(hunter.floorHeight, 0),
+    targetFloor: numberOr(hunter.targetFloor, 0),
+    mode: cleanText(hunter.mode, "patrol", 20),
+    awareness: Math.max(0, Math.min(1, numberOr(hunter.awareness, 0))),
+  }));
 }
 
 function createPlayer(room, username) {
@@ -79,22 +119,33 @@ function createPlayer(room, username) {
     y: 1.72,
     z: 0,
     yaw: 0,
+    pitch: 0,
+    floorHeight: 0,
+    sound: 0,
+    flashlightOn: true,
+    hiding: false,
     caught: false,
     victory: false,
     lastSeen: Date.now(),
   };
   room.players.set(player.id, player);
+  if (!room.hostId) {
+    room.hostId = player.id;
+  }
   room.lastActive = Date.now();
   room.chat.push({ id: id("m"), system: true, username: "System", text: `${player.username} joined.`, time: Date.now() });
   return player;
 }
 
 function roomPayload(room) {
+  ensureRoomHost(room);
   return {
     id: room.id,
     name: room.name,
+    hostId: room.hostId,
     createdAt: room.createdAt,
     players: [...room.players.values()],
+    hunters: room.hunters || [],
     chat: room.chat.slice(-50),
   };
 }
@@ -108,12 +159,14 @@ async function api(req, res, url) {
 
   if (url.pathname === "/api/rooms" && req.method === "GET") {
     send(res, 200, {
-      rooms: [...rooms.values()].map((room) => ({
-        id: room.id,
-        name: room.name,
-        count: room.players.size,
-        createdAt: room.createdAt,
-      })),
+      rooms: [...rooms.values()]
+        .filter((room) => room.players.size > 0)
+        .map((room) => ({
+          id: room.id,
+          name: room.name,
+          count: room.players.size,
+          createdAt: room.createdAt,
+        })),
     });
     return true;
   }
@@ -125,7 +178,9 @@ async function api(req, res, url) {
       name: cleanText(body.name, "Island Run"),
       createdAt: Date.now(),
       lastActive: Date.now(),
+      hostId: "",
       players: new Map(),
+      hunters: [],
       chat: [],
     };
     rooms.set(room.id, room);
@@ -170,9 +225,28 @@ async function api(req, res, url) {
     player.y = Number(body.y) || 1.72;
     player.z = Number(body.z) || 0;
     player.yaw = Number(body.yaw) || 0;
+    player.pitch = numberOr(body.pitch, 0);
+    player.floorHeight = numberOr(body.floorHeight, 0);
+    player.sound = Math.max(0, Math.min(1, numberOr(body.sound, 0)));
+    player.flashlightOn = body.flashlightOn !== false;
+    player.hiding = Boolean(body.hiding);
     player.caught = Boolean(body.caught);
     player.victory = Boolean(body.victory);
     player.lastSeen = Date.now();
+    ensureRoomHost(room);
+    if (room.hostId === player.id) {
+      room.hunters = cleanHunters(body.hunters);
+      if (Array.isArray(body.caughtPlayers)) {
+        body.caughtPlayers.slice(0, 8).forEach((targetId) => {
+          const target = room.players.get(String(targetId || ""));
+          if (target && target.id !== player.id) {
+            target.caught = true;
+            target.lastSeen = Date.now();
+          }
+        });
+      }
+    }
+    ensureRoomHost(room);
     room.lastActive = Date.now();
     send(res, 200, { ok: true, room: roomPayload(room) });
     return true;
