@@ -125,6 +125,20 @@ function cleanHunters(value) {
   }));
 }
 
+function cleanItems(value) {
+  const items = {};
+  if (!value || typeof value !== "object") {
+    return items;
+  }
+
+  ITEM_IDS.forEach((id) => {
+    if (value[id] === true) {
+      items[id] = true;
+    }
+  });
+  return items;
+}
+
 function cleanMultiplier(value, fallback = 1) {
   return Math.max(0.25, Math.min(3, numberOr(value, fallback)));
 }
@@ -191,6 +205,7 @@ function roomPayload(room) {
     hostId: room.hostId,
     createdAt: room.createdAt,
     gameConfig: room.gameConfig,
+    items: room.items || {},
     players: [...room.players.values()],
     hunters: room.hunters || [],
     chat: room.chat.slice(-50),
@@ -230,6 +245,7 @@ async function api(req, res, url) {
       gameConfig: cleanGameConfig(body.gameConfig),
       players: new Map(),
       hunters: [],
+      items: {},
       chat: [],
     };
     rooms.set(room.id, room);
@@ -282,6 +298,7 @@ async function api(req, res, url) {
     player.caught = Boolean(body.caught);
     player.victory = Boolean(body.victory);
     player.lastSeen = Date.now();
+    room.items = { ...(room.items || {}), ...cleanItems(body.items) };
     ensureRoomHost(room);
     if (room.hostId === player.id) {
       room.hunters = cleanHunters(body.hunters);

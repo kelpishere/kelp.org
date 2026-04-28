@@ -4,8 +4,8 @@ const MAP_SCALE = 3.4;
 const WORLD_RADIUS = 62 * MAP_SCALE;
 const PLAYER_HEIGHT = 1.72;
 const PLAYER_RADIUS = 0.62;
-const ENEMY_RADIUS = 0.78;
-const ENEMY_HITBOX_HEIGHT = 2.8;
+const ENEMY_RADIUS = PLAYER_RADIUS;
+const ENEMY_HITBOX_HEIGHT = PLAYER_HEIGHT;
 const GRAVITY = 18;
 const JUMP_VELOCITY = 6.4;
 const BASE_MOUSE_SENSITIVITY = 0.0022;
@@ -67,7 +67,7 @@ const GAME_MODES = {
     boatOnly: false,
     wallBreaker: false,
     hunterIds: [],
-    radarMode: "collect",
+    radarMode: "start",
     daylight: true,
     label: "Practice",
   },
@@ -213,8 +213,8 @@ const HUNTER_SPECS = [
     name: "Hawking",
     textureUrl: HAWKING_FACE_TEXTURE_URL,
     textureCrop: { x: 0.19, y: 0.43, w: 0.62, h: 0.5 },
-    radius: 0.46,
-    height: 2.25,
+    radius: PLAYER_RADIUS,
+    height: PLAYER_HEIGHT,
     speedScale: 0.72,
     rangeScale: 1.65,
     kind: "wheelchair",
@@ -267,6 +267,7 @@ const dom = {
   inventory: document.querySelector("#inventory-panel"),
   inventorySlots: [...document.querySelectorAll("[data-slot]")],
   radarMap: document.querySelector("#radar-map"),
+  radarCompass: document.querySelector("#radar-compass"),
   radarBlips: document.querySelector("#radar-blips"),
   radarBatteryText: document.querySelector("#radar-battery-text"),
   radarBatteryFill: document.querySelector("#radar-battery-fill"),
@@ -374,6 +375,7 @@ const state = {
     caught: false,
     caughtPlayers: new Set(),
     spectatingId: "",
+    sharedItemsSignature: "",
   },
   input: {
     dragging: false,
@@ -430,6 +432,8 @@ function createHunterState() {
     wallBreakTimer: 0,
     wallBreakCooldown: 0,
     targetPlayerId: "local",
+    avoidanceTarget: new THREE.Vector3(),
+    avoidanceTimer: 0,
   };
 }
 
@@ -1581,8 +1585,8 @@ function addCollectibles() {
   addCollectible({
     id: "battery",
     mesh: buildBattery(),
-    x: -10,
-    z: 1.5,
+    x: -36,
+    z: 12,
     floor: 0,
     requires: ["fuse"],
     prompt: "Press E to take the radio battery",
@@ -2497,21 +2501,18 @@ function createHunterActor(spec) {
 function createFaceBoxHunter(spec) {
   const group = new THREE.Group();
   const faceTexture = createPortraitTexture(spec.textureUrl, spec.id === "trump" ? 36 : 22, spec.textureCrop);
-  const faceMaterial = new THREE.MeshBasicMaterial({
+  const faceMaterial = new THREE.MeshStandardMaterial({
     color: 0xffffff,
-    fog: false,
     map: faceTexture,
     side: THREE.DoubleSide,
-    toneMapped: false,
-  });
-  const capMaterial = new THREE.MeshBasicMaterial({
-    color: 0x101010,
-    fog: false,
-    toneMapped: false,
+    roughness: 0.82,
+    metalness: 0,
+    emissive: 0x1b1412,
+    emissiveIntensity: 0.08,
   });
   const hitbox = new THREE.Mesh(
     new THREE.BoxGeometry(spec.radius * 2, spec.height, spec.radius * 2),
-    [faceMaterial, faceMaterial, capMaterial, capMaterial, faceMaterial, faceMaterial],
+    [faceMaterial, faceMaterial, faceMaterial, faceMaterial, faceMaterial, faceMaterial],
   );
   hitbox.position.y = spec.height / 2;
   hitbox.castShadow = true;
@@ -2627,6 +2628,8 @@ function resetEnemyState() {
   state.enemy.stuckTimer = 0;
   state.enemy.wallBreakTimer = 0;
   state.enemy.wallBreakCooldown = 0;
+  state.enemy.avoidanceTarget.set(0, 0, 0);
+  state.enemy.avoidanceTimer = 0;
   enemyActor.position.copy(getRandomEnemySpawn());
   enemyActor.position.y = 0;
   state.enemy.lastPosition.copy(enemyActor.position);
@@ -2808,7 +2811,7 @@ function attachEvents() {
   document.addEventListener("webkitfullscreenchange", syncFullscreenButton);
 
   window.addEventListener("mousemove", (event) => {
-    if (!state.pointerLocked || state.gameOver || state.victory) {
+    if (!state.pointerLocked || state.gameOver || state.victory || isUiInputActive()) {
       return;
     }
 
@@ -2816,7 +2819,7 @@ function attachEvents() {
   });
 
   renderer.domElement.addEventListener("pointerdown", (event) => {
-    if (!state.started || state.gameOver || state.victory || event.button !== 0) {
+    if (!state.started || state.gameOver || state.victory || event.button !== 0 || isUiInputActive()) {
       return;
     }
 
@@ -2840,7 +2843,8 @@ function attachEvents() {
       !state.input.dragging ||
       event.pointerId !== state.input.pointerId ||
       state.gameOver ||
-      state.victory
+      state.victory ||
+      isUiInputActive()
     ) {
       return;
     }
@@ -2914,6 +2918,11 @@ function attachEvents() {
     }
 
     if (!playing) {
+      return;
+    }
+
+    if (isUiInputActive()) {
+      keys.clear();
       return;
     }
 
@@ -3230,11 +3239,12 @@ function beginMultiplayerRun(room, playerId, username) {
   state.multiplayer.caught = false;
   state.multiplayer.caughtPlayers.clear();
   state.multiplayer.spectatingId = "";
+  state.multiplayer.sharedItemsSignature = "";
   state.gameMode = "custom";
   state.customMode = roomConfig;
-  applyMultiplayerRoom(room);
   dom.startScreen.classList.remove("active");
   resetGame();
+  applyMultiplayerRoom(room);
   setMessage(`Multiplayer room "${state.multiplayer.roomName}" joined with custom rules. Press T to chat.`);
   syncMultiplayerUi();
 }
@@ -3439,6 +3449,7 @@ async function postMultiplayerState() {
     hiding: state.player.hiding,
     caught: state.multiplayer.caught,
     victory: state.victory,
+    items: state.items,
   };
 
   if (isMultiplayerHost()) {
@@ -3469,6 +3480,7 @@ function applyMultiplayerRoom(room) {
   state.multiplayer.roomName = room.name || state.multiplayer.roomName || "Island Run";
   state.multiplayer.hostId = room.hostId || state.multiplayer.hostId || "";
   renderChatMessages(room.chat || []);
+  applySharedItems(room.items || {});
 
   const localPlayer = room.players?.find((player) => player.id === state.multiplayer.playerId);
   if (localPlayer && !state.multiplayer.caught && localPlayer.caught && !state.victory) {
@@ -3483,6 +3495,46 @@ function applyMultiplayerRoom(room) {
     applyHunterSnapshots(room.hunters || []);
   }
   syncMultiplayerUi();
+}
+
+function applySharedItems(sharedItems) {
+  if (!state.multiplayer.enabled || !sharedItems || typeof sharedItems !== "object") {
+    return;
+  }
+
+  const collectedIds = REQUIRED_ITEM_IDS.filter((id) => sharedItems[id] === true);
+  const signature = collectedIds.sort().join("|");
+  if (signature === state.multiplayer.sharedItemsSignature) {
+    return;
+  }
+  state.multiplayer.sharedItemsSignature = signature;
+
+  let changed = false;
+  collectedIds.forEach((id) => {
+    if (!state.items[id]) {
+      state.items[id] = true;
+      changed = true;
+    }
+    if (INVENTORY_ITEM_IDS.includes(id)) {
+      addInventoryItem(id, false);
+    }
+  });
+
+  collectibles.forEach((item) => {
+    if (!state.items[item.id]) {
+      return;
+    }
+    item.collected = true;
+    item.mesh.visible = false;
+    item.highlight.visible = false;
+    item.marker.visible = false;
+    item.beacon.visible = false;
+  });
+
+  if (changed) {
+    syncChecklist();
+    syncInventoryUI();
+  }
 }
 
 function syncRemotePlayers(players) {
@@ -3547,24 +3599,15 @@ function createRemotePlayerEntity(player) {
 
   const flashlightGroup = new THREE.Group();
   flashlightGroup.position.set(0.18, 1.35, -0.22);
-  const cone = new THREE.Mesh(
-    new THREE.ConeGeometry(0.82, 5.8, LOW_SPEC_MODE ? 10 : 18, 1, true),
-    new THREE.MeshBasicMaterial({
-      color: 0xcafcff,
-      transparent: true,
-      opacity: LOW_SPEC_MODE ? 0.12 : 0.18,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    }),
-  );
-  cone.position.z = -2.9;
-  cone.rotation.x = -Math.PI / 2;
-  flashlightGroup.add(cone);
-  if (!LOW_SPEC_MODE) {
-    const glow = new THREE.PointLight(0xbffaff, 0.55, 7);
-    glow.position.set(0, 0, -2.2);
-    flashlightGroup.add(glow);
-  }
+  const remoteFlashlight = new THREE.SpotLight(0xcafcff, LOW_SPEC_MODE ? 18 : 42, 42, Math.PI / 8, 0.34, 1.2);
+  remoteFlashlight.position.set(0, 0, 0);
+  remoteFlashlight.target.position.set(0, 0, -16);
+  remoteFlashlight.castShadow = ENABLE_SHADOWS && !LOW_SPEC_MODE;
+  flashlightGroup.add(remoteFlashlight);
+  flashlightGroup.add(remoteFlashlight.target);
+  const glow = new THREE.PointLight(0xbffaff, LOW_SPEC_MODE ? 0.18 : 0.42, 5.5);
+  glow.position.set(0, 0, -1.2);
+  flashlightGroup.add(glow);
   flashlightGroup.visible = player.flashlightOn !== false && !player.caught;
   group.add(flashlightGroup);
 
@@ -3985,7 +4028,9 @@ function tryInteract() {
   }
 
   if (state.interactive.type === "boat") {
-    if (hasAllItems()) {
+    if (!hasEnoughEscapePlayers()) {
+      setMessage("Two runners are needed at the boat. Get one teammate to the dock with you.");
+    } else if (hasAllItems()) {
       triggerVictory();
     } else {
       setMessage(`The boat still needs ${getMissingEscapeItems().join(", ")}.`);
@@ -4136,7 +4181,7 @@ function addRadarBatteryCharge(amount) {
   clearRadarMap();
 }
 
-function addInventoryItem(id) {
+function addInventoryItem(id, selectSlot = true) {
   if (state.inventory.slots.includes(id)) {
     return true;
   }
@@ -4148,7 +4193,9 @@ function addInventoryItem(id) {
   }
 
   state.inventory.slots[emptyIndex] = id;
-  state.inventory.selected = emptyIndex;
+  if (selectSlot) {
+    state.inventory.selected = emptyIndex;
+  }
   return true;
 }
 
@@ -4266,6 +4313,9 @@ function showReadout(title, body) {
 function closeReadout() {
   dom.readout?.classList.remove("active");
   dom.readout?.setAttribute("aria-hidden", "true");
+  if (state.started && !state.gameOver && !state.victory) {
+    renderer.domElement.focus({ preventScroll: true });
+  }
 }
 
 function needsSafeCodeEntry(item) {
@@ -4467,21 +4517,7 @@ function getItemTrackerPrompt() {
   const itemPosition = new THREE.Vector3();
   item.mesh.getWorldPosition(itemPosition);
   const distance = Math.round(horizontalDistance(state.player.position, itemPosition));
-  return `Tracker: ${item.name} ${distance}m ${getItemTrackerDirection(itemPosition)}.`;
-}
-
-function getItemTrackerDirection(itemPosition) {
-  const dx = itemPosition.x - state.player.position.x;
-  const dz = itemPosition.z - state.player.position.z;
-  if (Math.hypot(dx, dz) < 1) {
-    return "here";
-  }
-
-  const angleToItem = Math.atan2(dx, dz);
-  const relative = Math.atan2(Math.sin(angleToItem - state.yaw), Math.cos(angleToItem - state.yaw));
-  const labels = ["ahead", "ahead-right", "right", "behind-right", "behind", "behind-left", "left", "ahead-left"];
-  const index = Math.round((relative + Math.PI * 2) / (Math.PI / 4)) % labels.length;
-  return labels[index];
+  return `Tracker: ${item.name} ${distance}m.`;
 }
 
 function clearItemBeacons() {
@@ -4529,9 +4565,28 @@ function leaveHidingPlace() {
 }
 
 function applyLookDelta(deltaX, deltaY) {
+  if (isUiInputActive()) {
+    return;
+  }
+
   state.yaw -= deltaX * BASE_MOUSE_SENSITIVITY * state.settings.sensitivity;
   state.pitch -= deltaY * BASE_VERTICAL_SENSITIVITY * state.settings.sensitivity;
   state.pitch = THREE.MathUtils.clamp(state.pitch, -1.25, 1.15);
+}
+
+function isUiInputActive() {
+  const activeElement = document.activeElement;
+  const activeTag = activeElement?.tagName;
+  return Boolean(
+    state.multiplayer.chatOpen ||
+      state.code.active ||
+      dom.readout?.classList.contains("active") ||
+      dom.startScreen?.classList.contains("active") ||
+      (activeElement &&
+        activeElement !== document.body &&
+        activeElement !== renderer.domElement &&
+        ["INPUT", "TEXTAREA", "SELECT"].includes(activeTag)),
+  );
 }
 
 function beginLookDrag(event) {
@@ -4707,6 +4762,10 @@ function updateJump(delta) {
 }
 
 function updateKeyboardLook(delta) {
+  if (isUiInputActive()) {
+    return;
+  }
+
   let horizontal = 0;
   let vertical = 0;
 
@@ -4905,6 +4964,7 @@ function updateRadarMap() {
   if (dom.radarBatteryFill) {
     dom.radarBatteryFill.style.width = `${THREE.MathUtils.clamp(state.player.radarBattery, 0, 100)}%`;
   }
+  updateRadarCompass();
   if (!dom.radarBlips) {
     return;
   }
@@ -4934,6 +4994,32 @@ function updateRadarMap() {
   });
 }
 
+function updateRadarCompass() {
+  if (!dom.radarCompass) {
+    return;
+  }
+
+  const vectors = {
+    N: [0, -1],
+    NE: [1, -1],
+    E: [1, 0],
+    SE: [1, 1],
+    S: [0, 1],
+    SW: [-1, 1],
+    W: [-1, 0],
+    NW: [-1, -1],
+  };
+  const sin = Math.sin(-state.yaw);
+  const cos = Math.cos(-state.yaw);
+  dom.radarCompass.querySelectorAll("[data-dir]").forEach((label) => {
+    const [dx, dz] = vectors[label.dataset.dir] || [0, -1];
+    const localX = dx * cos - dz * sin;
+    const localZ = dx * sin + dz * cos;
+    label.style.left = `${50 + localX * 42}%`;
+    label.style.top = `${50 + localZ * 42}%`;
+  });
+}
+
 function clearRadarMap() {
   if (dom.radarBlips) {
     dom.radarBlips.textContent = "";
@@ -4953,7 +5039,7 @@ function checkSyncedHunterCapture() {
 
   const caught = getActiveHunters().some((hunter) => {
     const sameFloor = Math.abs(hunter.state.floorHeight - state.player.floorHeight) < 0.45;
-    return sameFloor && horizontalDistance(hunter.actor.position, state.player.position) < 1.9;
+    return sameFloor && horizontalDistance(hunter.actor.position, state.player.position) < PLAYER_RADIUS + hunter.spec.radius + 0.18;
   });
 
   if (caught) {
@@ -5042,8 +5128,8 @@ function chooseHunterPrey(enemyPosition, hunterHearing, hunterSight) {
   candidates.forEach((candidate) => {
     const distance = horizontalDistance(enemyPosition, candidate.position);
     const sameFloor = Math.abs(state.enemy.floorHeight - candidate.floorHeight) < 0.45;
-    const noiseReach = (13 + candidate.sound * 50) * hunterHearing;
-    const heard = !candidate.hiding && sameFloor && candidate.sound > 0.08 && distance < noiseReach;
+    const noiseReach = (9 + candidate.sound * 32) * hunterHearing;
+    const heard = !candidate.hiding && sameFloor && candidate.sound > 0.13 && distance < noiseReach;
     const directRange = (candidate.flashlightOn ? 40 : 26) * hunterSight;
     const peripheralRange = (candidate.flashlightOn ? 24 : 15) * hunterSight;
     const directSight =
@@ -5086,10 +5172,10 @@ function updateSingleEnemy(delta) {
   const sameFloorAsPlayer = Math.abs(state.enemy.floorHeight - prey.floorHeight) < 0.45;
   const noiseIntensity = THREE.MathUtils.clamp(prey.sound, 0, 1);
   const noiseBoost = smoothstep(0.34, 1, noiseIntensity);
-  const playerNoiseReach = (13 + noiseIntensity * 50) * hunterHearing;
+  const playerNoiseReach = (9 + noiseIntensity * 32) * hunterHearing;
   const heardPlayer =
     !prey.hiding &&
-    prey.sound > 0.08 &&
+    prey.sound > 0.13 &&
     distanceToPlayer < playerNoiseReach &&
     sameFloorAsPlayer;
   const flashlightExposure = prey.flashlightOn ? 1.34 : 0.72;
@@ -5115,10 +5201,10 @@ function updateSingleEnemy(delta) {
   const overwhelmingNoise =
     !prey.hiding &&
     sameFloorAsPlayer &&
-    ((prey.sound > 0.48 && distanceToPlayer < 34 * hunterHearing) ||
-      (prey.sound > 0.82 && distanceToPlayer < 54 * hunterHearing));
+    ((prey.sound > 0.52 && distanceToPlayer < 24 * hunterHearing) ||
+      (prey.sound > 0.86 && distanceToPlayer < 38 * hunterHearing));
   const hearingPressure = heardPlayer
-    ? THREE.MathUtils.clamp(prey.sound * 1.15 - distanceToPlayer / 44, 0.02, 0.72)
+    ? THREE.MathUtils.clamp(prey.sound * 1.05 - distanceToPlayer / 34, 0.02, 0.58)
     : 0;
 
   state.enemy.stairCooldown = Math.max(0, state.enemy.stairCooldown - delta);
@@ -5249,7 +5335,8 @@ function updateSingleEnemy(delta) {
     target = state.enemy.wanderTarget;
   }
 
-  const movementTarget = getEnemyMovementTarget(target);
+  let movementTarget = getEnemyMovementTarget(target);
+  movementTarget = getEnemyNavigationTarget(movementTarget, hunterRadius, delta);
   const speed =
     (state.enemy.mode === "chase"
       ? 5.65 + noiseBoost * 4.4 + state.enemy.awareness * 1.4
@@ -5273,9 +5360,14 @@ function updateSingleEnemy(delta) {
   }
   enemyActor.position.copy(newPosition);
   enemyActor.position.y = state.enemy.floorHeight;
-  if (state.enemy.mode === "patrol") {
-    state.enemy.stuckTimer = enemyMoved < 0.018 ? state.enemy.stuckTimer + delta : 0;
-    if (state.enemy.stuckTimer > 1.2) {
+  state.enemy.stuckTimer = enemyMoved < 0.018 ? state.enemy.stuckTimer + delta : 0;
+  if (state.enemy.stuckTimer > 0.55 && !wallBreakMode) {
+    const bypass = findHunterBypassTarget(enemyActor.position, target, hunterRadius, state.enemy.floorHeight);
+    if (bypass) {
+      state.enemy.avoidanceTarget.copy(bypass);
+      state.enemy.avoidanceTimer = 1.45;
+      state.enemy.stuckTimer = 0;
+    } else if (state.enemy.mode === "patrol" || state.enemy.mode === "investigate") {
       chooseNextWanderTarget();
     }
   }
@@ -5286,7 +5378,7 @@ function updateSingleEnemy(delta) {
     enemyActor.rotation.y = lerpAngle(enemyActor.rotation.y, targetYaw, 0.12);
   }
 
-  if (!prey.hiding && sameFloorAsPlayer && distanceToPlayer < 1.9) {
+  if (!prey.hiding && sameFloorAsPlayer && distanceToPlayer < PLAYER_RADIUS + hunterRadius + 0.18) {
     if (prey.isLocal) {
       triggerLoss();
     } else {
@@ -5297,6 +5389,62 @@ function updateSingleEnemy(delta) {
   if (enemyDebugHelper) {
     enemyDebugHelper.update();
   }
+}
+
+function getEnemyNavigationTarget(target, hunterRadius, delta) {
+  if (state.enemy.avoidanceTimer <= 0) {
+    return target;
+  }
+
+  state.enemy.avoidanceTimer = Math.max(0, state.enemy.avoidanceTimer - delta);
+  if (
+    horizontalDistance(enemyActor.position, state.enemy.avoidanceTarget) < Math.max(1.4, hunterRadius * 2.2) ||
+    collides(state.enemy.avoidanceTarget, hunterRadius, state.enemy.floorHeight)
+  ) {
+    state.enemy.avoidanceTimer = 0;
+    return target;
+  }
+
+  return state.enemy.avoidanceTarget;
+}
+
+function findHunterBypassTarget(origin, target, hunterRadius, floorHeight) {
+  const forward = new THREE.Vector3(target.x - origin.x, 0, target.z - origin.z);
+  if (forward.lengthSq() < 0.0001) {
+    return null;
+  }
+
+  forward.normalize();
+  const right = new THREE.Vector3(forward.z, 0, -forward.x);
+  const samples = [
+    [1, 4, 2],
+    [-1, 4, 2],
+    [1, 7, 3],
+    [-1, 7, 3],
+    [1, 11, 4],
+    [-1, 11, 4],
+    [1, 15, 6],
+    [-1, 15, 6],
+  ];
+
+  for (const [side, lateral, advance] of samples) {
+    const candidate = origin
+      .clone()
+      .add(right.clone().multiplyScalar(side * lateral))
+      .add(forward.clone().multiplyScalar(advance));
+    candidate.y = floorHeight;
+    const safe = findSafePosition(candidate, hunterRadius, floorHeight);
+    if (
+      isInsideIsland(safe.x, safe.z) &&
+      !collides(safe, hunterRadius, floorHeight) &&
+      horizontalDistance(safe, origin) > hunterRadius * 2 &&
+      horizontalDistance(safe, target) < horizontalDistance(origin, target) + 10
+    ) {
+      return safe;
+    }
+  }
+
+  return null;
 }
 
 function maybeStartHideCheck() {
@@ -5450,9 +5598,11 @@ function updateInteractions() {
   const boatDistance = horizontalDistance(state.player.position, BOAT_ESCAPE_POINT);
   if (!state.interactive && state.player.floorHeight === 0 && boatDistance < 5.8) {
     state.interactive = { type: "boat" };
-    state.prompt = hasAllItems()
-      ? "Press E to launch the boat"
-      : `The boat needs ${getMissingEscapeItems().join(", ")}`;
+    state.prompt = !hasEnoughEscapePlayers()
+      ? "The boat needs two runners here"
+      : hasAllItems()
+        ? "Press E to launch the boat"
+        : `The boat needs ${getMissingEscapeItems().join(", ")}`;
   }
 
   dom.prompt.textContent = state.prompt || getIdlePrompt();
@@ -5882,6 +6032,25 @@ function generateSafeCode() {
   return digits.join("");
 }
 
+function generateSafeCodeFromSeed(seed = "room") {
+  let hash = 2166136261;
+  for (const char of String(seed)) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  const digits = [];
+  let value = hash >>> 0;
+  while (digits.length < 4) {
+    value = Math.imul(value ^ 0x9e3779b9, 1103515245) >>> 0;
+    const digit = String(value % 10);
+    if (!digits.includes(digit)) {
+      digits.push(digit);
+    }
+  }
+  return digits.join("");
+}
+
 function updateHud() {
   const intensity = Math.round(state.player.sound * 100);
   dom.soundFill.style.width = `${intensity}%`;
@@ -6068,8 +6237,11 @@ function resetGame() {
   state.items = createStartingItems(modeConfig);
   if (state.multiplayer.enabled) {
     state.multiplayer.caught = false;
+    state.multiplayer.sharedItemsSignature = "";
   }
-  state.code.value = generateSafeCode();
+  state.code.value = state.multiplayer.enabled
+    ? generateSafeCodeFromSeed(state.multiplayer.roomId || state.multiplayer.roomName)
+    : generateSafeCode();
   state.code.active = false;
   state.code.item = null;
   state.code.input = "";
@@ -6128,6 +6300,29 @@ function hasAllItems() {
   }
 
   return getRequiredItemIds().every((id) => state.items[id]);
+}
+
+function hasEnoughEscapePlayers() {
+  if (!state.multiplayer.enabled) {
+    return true;
+  }
+
+  const localAtBoat =
+    !state.multiplayer.caught &&
+    Math.abs(state.player.floorHeight) < 0.45 &&
+    horizontalDistance(state.player.position, BOAT_ESCAPE_POINT) < 8.5;
+  if (!localAtBoat) {
+    return false;
+  }
+
+  return (state.multiplayer.room?.players || []).some((player) => {
+    if (!player || player.id === state.multiplayer.playerId || player.caught || player.victory) {
+      return false;
+    }
+    const position = new THREE.Vector3(Number(player.x) || 0, Number(player.y) || PLAYER_HEIGHT, Number(player.z) || 0);
+    const floorHeight = Number(player.floorHeight) || 0;
+    return Math.abs(floorHeight) < 0.45 && horizontalDistance(position, BOAT_ESCAPE_POINT) < 8.5;
+  });
 }
 
 function syncChecklist() {
@@ -6295,7 +6490,7 @@ function steerToward(origin, target, amount, radius, floorOverride = null, ignor
   }
 
   direction.normalize();
-  const tryAngles = [0, 0.5, -0.5, 1.0, -1.0, 1.55, -1.55];
+  const tryAngles = [0, 0.28, -0.28, 0.55, -0.55, 0.9, -0.9, 1.25, -1.25, 1.58, -1.58, 2.15, -2.15, Math.PI];
 
   for (const angle of tryAngles) {
     const step = direction.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);

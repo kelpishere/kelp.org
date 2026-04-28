@@ -65,7 +65,7 @@ canvas {
 }
 
 body.flashlight-off #game-shell canvas {
-  filter: brightness(0.34) contrast(1.14) saturate(0.7);
+  filter: none;
 }
 
 body.radar-on #game-shell canvas {
@@ -73,7 +73,7 @@ body.radar-on #game-shell canvas {
 }
 
 body.radar-on.flashlight-off #game-shell canvas {
-  filter: brightness(0.34) contrast(1.14) saturate(0.7);
+  filter: none;
 }
 
 body.low-spec #game-shell canvas,
@@ -83,7 +83,7 @@ body.low-spec.radar-on #game-shell canvas {
 
 body.low-spec.flashlight-off #game-shell canvas,
 body.low-spec.radar-on.flashlight-off #game-shell canvas {
-  filter: brightness(0.38) contrast(1.08) saturate(0.72);
+  filter: none;
 }
 
 body.mouse-captured #game-shell canvas {
@@ -141,8 +141,8 @@ body.look-active #reticle {
   pointer-events: none;
   padding: clamp(16px, 2vw, 28px);
   display: grid;
-  grid-template-columns: minmax(220px, 300px) 1fr minmax(220px, 280px);
-  grid-template-rows: auto 1fr auto auto;
+  grid-template-columns: minmax(180px, 300px) minmax(0, 1fr) minmax(190px, 280px);
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   gap: 14px;
 }
 
@@ -284,6 +284,8 @@ body.fullscreen-active .fullscreen-button {
 .left-panel {
   grid-column: 1;
   padding: 16px;
+  max-height: min(62vh, 520px);
+  overflow: hidden;
 }
 
 .right-panel {
@@ -406,6 +408,22 @@ body.radar-on .radar-map {
 #radar-blips {
   position: absolute;
   inset: 0;
+}
+
+.radar-compass {
+  position: absolute;
+  inset: 0;
+  color: rgba(180, 255, 222, 0.72);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  pointer-events: none;
+  text-shadow: 0 0 8px rgba(0, 0, 0, 0.9);
+}
+
+.radar-compass span {
+  position: absolute;
+  transform: translate(-50%, -50%);
 }
 
 .radar-blip {
@@ -1034,6 +1052,8 @@ body.multiplayer-on .multiplayer-chat {
   #hud {
     grid-template-columns: 1fr 1fr;
     grid-template-rows: auto auto 1fr auto auto;
+    padding: 12px;
+    gap: 10px;
   }
 
   .top-strip,
@@ -1070,6 +1090,108 @@ body.multiplayer-on .multiplayer-chat {
   }
 }
 
+@media (max-height: 760px) {
+  #hud {
+    padding: 10px;
+    gap: 8px;
+  }
+
+  .brand h1 {
+    font-size: 1.45rem;
+  }
+
+  .kicker,
+  .eyebrow,
+  .panel-label {
+    font-size: 0.62rem;
+    margin-bottom: 4px;
+  }
+
+  .alert-pill,
+  .flashlight-pill,
+  .radar-pill,
+  .timer-pill {
+    min-width: 84px;
+    padding: 7px 9px;
+    font-size: 0.72rem;
+  }
+
+  .fullscreen-button {
+    width: 36px;
+    height: 36px;
+  }
+
+  .left-panel,
+  .right-panel,
+  .inventory-panel,
+  .radar-map,
+  .multiplayer-hud {
+    padding: 9px;
+    box-shadow: 0 12px 24px var(--shadow);
+  }
+
+  .left-panel {
+    max-height: 40vh;
+  }
+
+  .objective-list {
+    gap: 5px;
+    max-height: 28vh;
+    font-size: 0.76rem;
+  }
+
+  .right-panel {
+    max-width: 190px;
+  }
+
+  .radar-map {
+    width: min(100%, 205px);
+  }
+
+  .controls-hint {
+    max-width: min(88vw, 620px);
+    padding: 7px 9px;
+    gap: 5px 8px;
+    font-size: 0.68rem;
+    margin-bottom: 8px;
+  }
+
+  .status-line {
+    margin-bottom: 58px;
+    max-width: min(84vw, 640px);
+    font-size: 0.8rem;
+  }
+
+  .center-prompt {
+    max-width: min(84vw, 620px);
+    font-size: 0.92rem;
+  }
+
+  .inventory-slots {
+    gap: 5px;
+  }
+
+  .inventory-slots button {
+    padding: 4px;
+    font-size: 0.58rem;
+  }
+}
+
+@media (max-width: 780px), (max-height: 620px) {
+  body.playing .right-panel {
+    display: none;
+  }
+
+  body.playing .controls-hint {
+    display: none;
+  }
+
+  .multiplayer-chat {
+    bottom: 96px;
+    width: min(300px, calc(100vw - 20px));
+  }
+}
+
 @media (max-width: 640px) {
   #hud {
     grid-template-columns: 1fr;
@@ -1089,6 +1211,14 @@ body.multiplayer-on .multiplayer-chat {
   .radar-map,
   .multiplayer-hud {
     grid-column: 1;
+  }
+
+  .left-panel {
+    max-height: 28vh;
+  }
+
+  .objective-list {
+    max-height: 18vh;
   }
 
   .brand h1 {

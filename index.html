@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Black Tide</title>
-    <link rel="stylesheet" href="./styles.css?v=item-tracker-1" />
+    <link rel="stylesheet" href="./styles.css?v=sync-light-ai-1" />
   </head>
   <body>
     <div id="app">
@@ -81,6 +81,16 @@
             <div class="radar-rings"></div>
             <div class="radar-sweep"></div>
             <div class="radar-center"></div>
+            <div class="radar-compass" id="radar-compass">
+              <span data-dir="N">N</span>
+              <span data-dir="NE">NE</span>
+              <span data-dir="E">E</span>
+              <span data-dir="SE">SE</span>
+              <span data-dir="S">S</span>
+              <span data-dir="SW">SW</span>
+              <span data-dir="W">W</span>
+              <span data-dir="NW">NW</span>
+            </div>
             <div id="radar-blips"></div>
           </div>
           <div class="radar-legend">
@@ -251,6 +261,6 @@
       </div>
     </div>
 
-    <script type="module" src="./src/main.js?v=item-tracker-1"></script>
+    <script type="module" src="./src/main.js?v=sync-light-ai-1"></script>
   </body>
 </html>
